@@ -1,5 +1,5 @@
-// parsemultipart
-package main
+//Package otasker for execute request from HTTP on Oracle DB
+package otasker
 
 import (
 	"bytes"

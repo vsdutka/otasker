@@ -2,16 +2,17 @@
 package otasker
 
 import (
-	"bytes"
+	//"bytes"
 	"fmt"
 	"gopkg.in/errgo.v1"
 	"gopkg.in/goracle.v1/oracle"
 	"io/ioutil"
-	"mime/multipart"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -26,33 +27,29 @@ const (
 	statusAccountIsLocked           = 567
 )
 
-type sessionTasker interface {
-	Run(task *sessionTask)
+type OracleTaskResult struct {
+	resStatusCode  int
+	resContentType string
+	resHeaders     string
+	resContent     []byte
+}
+type OracleTasker interface {
+	Run(sessionID,
+		taskID,
+		reqUserName,
+		reqUserPass,
+		reqSID,
+		reqParamStoreProc,
+		reqBeforeScript,
+		reqAfterScript,
+		reqDocumentTable string,
+		reqCGIEnv map[string]string,
+		reqProc string,
+		reqParams url.Values,
+		reqFiles *Form) OracleTaskResult
 	Close() error
 	Break() error
 	Info() sesInfo
-}
-
-type sessionTask struct {
-	sessionID         string
-	taskID            string
-	reqUserName       string
-	reqUserPass       string
-	reqDumpStatements bool
-	reqSID            string
-	reqParamStoreProc string
-	reqBeforeScript   string
-	reqAfterScript    string
-	reqDocumentTable  string
-	reqCGIEnv         map[string]string
-	reqProc           string
-	reqParams         url.Values
-	reqFiles          *multipart.Form
-	resDuration       int64
-	resStatusCode     int
-	resContentType    string
-	resHeaders        string
-	resContent        []byte
 }
 
 type oracleTaskerStep struct {
@@ -60,17 +57,24 @@ type oracleTaskerStep struct {
 	stepFn        time.Time
 	stepStm       string
 	stepStmParams map[string]interface{}
-	stepResults   string
-	stepSuccess   bool
+	//stepResults   string
+	stepSuccess bool
 }
 
 type oracleTaskerMessageLog struct {
-	task  sessionTask
-	steps map[string]*oracleTaskerStep
+	//task  sessionTask
+	sessionID   string
+	taskID      string
+	reqUserName string
+	reqUserPass string
+	reqSID      string
+	reqProc     string
+	steps       map[string]*oracleTaskerStep
 }
 
 type oracleTasker struct {
-	sync.Mutex
+	mu                sync.RWMutex
+	mLog              sync.Mutex
 	sendOp            func(op *operation)
 	streamID          string
 	conn              *oracle.Connection
@@ -91,7 +95,7 @@ type oracleTasker struct {
 	stmFileUpload     string
 }
 
-func newOracleProcTasker(f func(op *operation), stmEvalSessionID, stmMain, stmGetRestChunk, stmKillSession, stmFileUpload, streamID string) sessionTasker {
+func newOracleProcTasker(f func(op *operation), stmEvalSessionID, stmMain, stmGetRestChunk, stmKillSession, stmFileUpload, streamID string) OracleTasker {
 	r := oracleTasker{}
 	r.sendOp = f
 	r.streamID = streamID
@@ -109,8 +113,8 @@ func newOracleProcTasker(f func(op *operation), stmEvalSessionID, stmMain, stmGe
 }
 
 func (r *oracleTasker) Close() error {
-	r.Lock()
-	defer r.Unlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.descr.Clear()
 	r.descr = nil
 	if r.conn != nil {
@@ -126,21 +130,40 @@ func (r *oracleTasker) Close() error {
 	return nil
 }
 
-func (r *oracleTasker) Run(task *sessionTask) {
+func (r *oracleTasker) Run(sessionID, taskID, reqUserName, reqUserPass, reqSID,
+	reqParamStoreProc, reqBeforeScript, reqAfterScript, reqDocumentTable string,
+	reqCGIEnv map[string]string, reqProc string, reqParams url.Values, reqFiles *Form) OracleTaskResult {
 	var bgMem runtime.MemStats
 	runtime.ReadMemStats(&bgMem)
 
-	r.Lock()
+	r.mu.Lock()
 	r.stateIsWorking = true
-	r.logCurr = &oracleTaskerMessageLog{task: *task, steps: make(map[string]*oracleTaskerStep)}
-	r.logs = append(r.logs, *r.logCurr)
+
+	func() {
+		r.mLog.Lock()
+		defer r.mLog.Unlock()
+		r.logCurr = &oracleTaskerMessageLog{
+			sessionID:   sessionID,
+			taskID:      taskID,
+			reqUserName: reqUserName,
+			reqUserPass: reqUserPass,
+			reqSID:      reqSID,
+			reqProc:     reqProc,
+			steps:       make(map[string]*oracleTaskerStep),
+		}
+		r.logs = append(r.logs, *r.logCurr)
+	}()
 
 	defer func(bgMem *runtime.MemStats) {
 
 		r.stateIsWorking = false
 		r.stateLastFinishDT = time.Now()
-		r.logCurr = nil
-		r.Unlock()
+		func() {
+			r.mLog.Lock()
+			defer r.mLog.Unlock()
+			r.logCurr = nil
+		}()
+		r.mu.Unlock()
 
 		var fnMem runtime.MemStats
 		runtime.ReadMemStats(&fnMem)
@@ -161,33 +184,39 @@ func (r *oracleTasker) Run(task *sessionTask) {
 		//		log.Println("************************************")
 	}(&bgMem)
 
-	if err := r.connect(task.reqUserName, task.reqUserPass, task.reqSID); err != nil {
-		task.resStatusCode, task.resContent = packError(err)
-		if task.resStatusCode == statusRequestWasInterrupted {
+	var res = OracleTaskResult{}
+	if err := r.connect(reqUserName, reqUserPass, reqSID); err != nil {
+		res.resStatusCode, res.resContent = packError(err)
+		if res.resStatusCode == statusRequestWasInterrupted {
 			r.conn.Close()
 		}
-		r.dumpError(task, err)
-		return
+		//FIXME
+		//r.dumpError(task, err)
+		return res
 	}
 
-	if err := r.run(task); err != nil {
-		task.resStatusCode, task.resContent = packError(err)
-		if task.resStatusCode == statusRequestWasInterrupted {
+	if err := r.run(&res, reqParamStoreProc, reqBeforeScript, reqAfterScript, reqDocumentTable,
+		reqCGIEnv, reqProc, reqParams, reqFiles); err != nil {
+		res.resStatusCode, res.resContent = packError(err)
+		if res.resStatusCode == statusRequestWasInterrupted {
 			r.conn.Close()
 		}
-		r.dumpError(task, err)
-		return
+		//FIXME
+		//r.dumpError(task, err)
+		return res
 	}
-	task.resStatusCode = http.StatusOK
+	res.resStatusCode = http.StatusOK
+	return res
 }
 
 func (r *oracleTasker) connect(username, userpass, connstr string) (err error) {
 	const (
 		stepName = "001 - connect"
 	)
-	step := r.openStep(stepName)
+	r.openStep(stepName)
 	defer r.closeStep(stepName)
-	step.stepStm = "connect"
+	r.setStepInfo(stepName, "connect", nil, false)
+
 	if (r.conn == nil) || (r.connUserName != username) || (r.connUserPass != userpass) || (r.connSID != connstr) {
 		if r.conn != nil {
 			bg := time.Now()
@@ -229,7 +258,7 @@ func (r *oracleTasker) connect(username, userpass, connstr string) (err error) {
 			}
 		}
 	}
-	step.stepSuccess = true
+	r.setStepInfo(stepName, "connect", nil, true)
 	return nil
 }
 
@@ -271,12 +300,10 @@ func (r *oracleTasker) evalSessionID() error {
 	const (
 		stepName = "002 - evalSessionID"
 	)
-	step := r.openStep(stepName)
+	r.openStep(stepName)
 
 	cur := r.conn.NewCursor()
 	defer func() { cur.Close(); r.closeStep(stepName) }()
-
-	step.stepStm = r.stmEvalSessionID
 
 	var (
 		err error
@@ -289,16 +316,19 @@ func (r *oracleTasker) evalSessionID() error {
 		return errgo.Newf("error creating variable for %s(%T): %s", sessID, sessID, err)
 	}
 
-	step.stepStmParams = map[string]interface{}{"sid": v}
+	stepStm := r.stmEvalSessionID
+	stepStmParams := map[string]interface{}{"sid": v}
+	r.setStepInfo(stepName, stepStm, stepStmParams, false)
 
-	err = r.execStm(cur, r.streamID, step.stepStm, step.stepStmParams)
+	err = r.execStm(cur, r.streamID, stepStm, stepStmParams)
 
 	r.sessID = sessID
-	step.stepSuccess = err == nil
+	r.setStepInfo(stepName, stepStm, stepStmParams, err == nil)
 	return err
 }
 
-func (r *oracleTasker) run(task *sessionTask) error {
+func (r *oracleTasker) run(res *OracleTaskResult, reqParamStoreProc, reqBeforeScript, reqAfterScript, reqDocumentTable string,
+	reqCGIEnv map[string]string, reqProc string, reqParams url.Values, reqFiles *Form) error {
 	const (
 		stepName      = "004 - run"
 		stmParamsInit = `
@@ -327,11 +357,11 @@ func (r *oracleTasker) run(task *sessionTask) error {
 		sqlErrMVar          *oracle.Variable
 		sqlErrTraceVar      *oracle.Variable
 	)
-	step := r.openStep(stepName)
+	r.openStep(stepName)
 	cur := r.conn.NewCursor()
 	defer func() { cur.Close(); r.closeStep(stepName) }()
 
-	numParams := int64(len(task.reqCGIEnv))
+	numParams := int64(len(reqCGIEnv))
 	var (
 		paramName       []interface{}
 		paramVal        []interface{}
@@ -339,7 +369,7 @@ func (r *oracleTasker) run(task *sessionTask) error {
 		paramValMaxLen  int
 	)
 
-	for key, val := range task.reqCGIEnv {
+	for key, val := range reqCGIEnv {
 		paramName = append(paramName, key)
 		paramVal = append(paramVal, val)
 
@@ -412,8 +442,8 @@ func (r *oracleTasker) run(task *sessionTask) error {
 	sParams := ""
 	sParamStore := ""
 
-	step.stepStm = "Describe " + task.reqProc
-	dp, err := r.descr.Describe(r, r.conn, task.reqProc)
+	stepStm := "Describe " + reqProc
+	dp, err := r.descr.Describe(r, r.conn, reqProc)
 	if err != nil {
 		return err
 	}
@@ -424,11 +454,11 @@ func (r *oracleTasker) run(task *sessionTask) error {
 		extParamNameMaxLen  int
 		extParamValueMaxLen int
 	)
-	for paramName, paramValue := range task.reqParams {
+	for paramName, paramValue := range reqParams {
 		//fmt.Println(paramName, " ", paramValue, " ", dp.ParamDataType(paramName), " ", dp.ParamDataSubType(paramName))
 		err := prepareParam(cur, paramName, paramValue,
 			dp.ParamDataType(paramName), dp.ParamDataSubType(paramName),
-			task.reqParamStoreProc, sqlParams, &sParams, &sParamStore)
+			reqParamStoreProc, sqlParams, &sParams, &sParamStore)
 		if err != nil {
 			return err
 		}
@@ -448,15 +478,16 @@ func (r *oracleTasker) run(task *sessionTask) error {
 		//		}
 	}
 
-	if task.reqFiles != nil {
-		for paramName, paramValue := range task.reqFiles.File {
-			fileName, err := r.saveFile(task, paramValue)
+	if reqFiles != nil {
+		for paramName, paramValue := range reqFiles.File {
+			fileName, err := r.saveFile(reqParamStoreProc, reqBeforeScript, reqAfterScript, reqDocumentTable,
+				reqCGIEnv, reqParams, paramValue)
 			if err != nil {
 				return err
 			}
 			err = prepareParam(cur, paramName, fileName,
 				dp.ParamDataType(paramName), dp.ParamDataSubType(paramName),
-				task.reqParamStoreProc, sqlParams, &sParams, &sParamStore)
+				reqParamStoreProc, sqlParams, &sParams, &sParamStore)
 			if err != nil {
 				return err
 			}
@@ -489,15 +520,11 @@ func (r *oracleTasker) run(task *sessionTask) error {
 		return errgo.Newf("error creating variable for %s(%T): %s", "package_name", "varchar2", err)
 	}
 
-	step.stepStm = fmt.Sprintf(r.stmMain, "", stmParamsInit, task.reqBeforeScript, sParamStore, task.reqProc, sParams, task.reqAfterScript)
-	step.stepStmParams = sqlParams
+	stepStm = fmt.Sprintf(r.stmMain, "", stmParamsInit, reqBeforeScript, sParamStore, reqProc, sParams, reqAfterScript)
+	stepStmParams := sqlParams
 
-	//fmt.Println(step.stepStm)
-	//	if task.reqDumpStatements {
-	//		r.dumpStm(task, fmt.Sprintf(r.stmMain, "", "%s", task.reqBeforeScript, sParamStore, task.reqProc, sParams, task.reqAfterScript), sqlParams)
-	//	}
-
-	if err := r.execStm(cur, r.streamID, step.stepStm, step.stepStmParams); err != nil {
+	r.setStepInfo(stepName, stepStm, stepStmParams, false)
+	if err := r.execStm(cur, r.streamID, stepStm, stepStmParams); err != nil {
 		return err
 	}
 
@@ -528,14 +555,14 @@ func (r *oracleTasker) run(task *sessionTask) error {
 	if ct != nil {
 		contentType = ct.(string)
 	}
-	task.resContentType = contentType
+	res.resContentType = contentType
 
 	ch, err := CustomHeadersVar.GetValue(0)
 	if err != nil {
 		return err
 	}
 	if ch != nil {
-		task.resHeaders = ch.(string)
+		res.resHeaders = ch.(string)
 	}
 
 	rc, err := rcVar.GetValue(0)
@@ -554,13 +581,13 @@ func (r *oracleTasker) run(task *sessionTask) error {
 				return nil
 			}
 			// Oracle возвращает данные ВСЕГДА в UTF-8
-			task.resContent = append(task.resContent, []byte(data.(string))...)
+			res.resContent = append(res.resContent, []byte(data.(string))...)
 			bNextChunkExists, err := bNextChunkExistsVar.GetValue(0)
 			if err != nil {
 				return err
 			}
 			if bNextChunkExists.(int32) != 0 {
-				r.getRestChunks(task)
+				r.getRestChunks(res)
 			}
 		}
 	case 1:
@@ -583,18 +610,18 @@ func (r *oracleTasker) run(task *sessionTask) error {
 					if err != nil {
 						return err
 					}
-					task.resContent = append(task.resContent, buf...)
+					res.resContent = append(res.resContent, buf...)
 				}
 			}
 
 		}
 	}
 
-	step.stepSuccess = true
+	r.setStepInfo(stepName, stepStm, stepStmParams, true)
 	return nil
 }
 
-func (r *oracleTasker) getRestChunks(task *sessionTask) error {
+func (r *oracleTasker) getRestChunks(res *OracleTaskResult) error {
 	const (
 		stepName = "005 - getRestChunks"
 	)
@@ -607,11 +634,10 @@ func (r *oracleTasker) getRestChunks(task *sessionTask) error {
 		sqlErrMVar          *oracle.Variable
 		sqlErrTraceVar      *oracle.Variable
 	)
-	step := r.openStep(stepName)
+	r.openStep(stepName)
 	cur := r.conn.NewCursor()
 	defer func() { cur.Close(); r.closeStep(stepName) }()
 
-	step.stepStm = r.stmGetRestChunk
 	if DataVar, err = cur.NewVariable(0, oracle.StringVarType, 32767); err != nil {
 		return errgo.Newf("error creating variable for %s(%T): %s", "Data", "string", err)
 	}
@@ -631,22 +657,20 @@ func (r *oracleTasker) getRestChunks(task *sessionTask) error {
 		return errgo.Newf("error creating variable for %s(%T): %s", "sqlErrTrace", "varchar2(32767)", err)
 	}
 
-	step.stepStmParams = map[string]interface{}{
+	stepStm := r.stmGetRestChunk
+	stepStmParams := map[string]interface{}{
 		"Data":             DataVar,
 		"bNextChunkExists": bNextChunkExistsVar,
 		"sqlerrcode":       sqlErrCodeVar,
 		"sqlerrm":          sqlErrMVar,
 		"sqlerrtrace":      sqlErrTraceVar,
 	}
+	r.setStepInfo(stepName, stepStm, stepStmParams, false)
 
 	bNextChunkExists = 1
 
 	for bNextChunkExists != 0 {
-		//		if task.reqDumpStatements {
-		//			r.dumpStm(task, r.stmGetRestChunk, nil)
-		//		}
-
-		if err := r.execStm(cur, r.streamID, step.stepStm, step.stepStmParams); err != nil {
+		if err := r.execStm(cur, r.streamID, stepStm, stepStmParams); err != nil {
 			return err
 		}
 		sqlErrCode, err := sqlErrCodeVar.GetValue(0)
@@ -670,13 +694,14 @@ func (r *oracleTasker) getRestChunks(task *sessionTask) error {
 			return err
 		}
 		// Oracle возвращает данные ВСЕГДА в UTF-8
-		task.resContent = append(task.resContent, []byte(data.(string))...)
+		res.resContent = append(res.resContent, []byte(data.(string))...)
 	}
-	step.stepSuccess = true
+	r.setStepInfo(stepName, stepStm, stepStmParams, true)
 	return nil
 }
 
-func (r *oracleTasker) saveFile(task *sessionTask, fileHeaders []*FileHeader) ([]string, error) {
+func (r *oracleTasker) saveFile(reqParamStoreProc, reqBeforeScript, reqAfterScript, reqDocumentTable string,
+	reqCGIEnv map[string]string, reqParams url.Values, fileHeaders []*FileHeader) ([]string, error) {
 	fileNames := make([]string, len(fileHeaders))
 	for i, fileHeader := range fileHeaders {
 		//_, fileNames[i] = filepath.Split(fileHeader.Filename)
@@ -690,9 +715,10 @@ func (r *oracleTasker) saveFile(task *sessionTask, fileHeaders []*FileHeader) ([
 		if err != nil {
 			return nil, err
 		}
-		_ = fileContent
+		//_ = fileContent
 		fileContentType := fileHeader.Header.Get("Content-Type")
-		fileNames[i], err = r.saveFileToDB(task, fileNames[i], fileHeader.lastArg, fileContentType, fileContentType, fileContent)
+		fileNames[i], err = r.saveFileToDB(reqParamStoreProc, reqBeforeScript, reqAfterScript, reqDocumentTable,
+			reqCGIEnv, reqParams, fileNames[i], fileHeader.lastArg, fileContentType, fileContentType, fileContent)
 		if err != nil {
 			return nil, err
 		}
@@ -700,7 +726,8 @@ func (r *oracleTasker) saveFile(task *sessionTask, fileHeaders []*FileHeader) ([
 	return fileNames, nil
 }
 
-func (r *oracleTasker) saveFileToDB(task *sessionTask, fName, fItem, fMime, fContentType string, fContent []byte) (string, error) {
+func (r *oracleTasker) saveFileToDB(reqParamStoreProc, reqBeforeScript, reqAfterScript, reqDocumentTable string,
+	reqCGIEnv map[string]string, reqParams url.Values, fName, fItem, fMime, fContentType string, fContent []byte) (string, error) {
 	const (
 		stepName = "003 - saveFileToDB"
 		//		stmParamsInit = `
@@ -716,11 +743,11 @@ func (r *oracleTasker) saveFileToDB(task *sessionTask, fName, fItem, fMime, fCon
 		//  l_content_type   := :content_type;
 		//`
 	)
-	step := r.openStep(stepName)
+	r.openStep(stepName)
 	cur := r.conn.NewCursor()
 	defer func() { cur.Close(); r.closeStep(stepName) }()
 
-	numParams := int64(len(task.reqCGIEnv))
+	numParams := int64(len(reqCGIEnv))
 	var (
 		paramName       []interface{}
 		paramVal        []interface{}
@@ -728,7 +755,7 @@ func (r *oracleTasker) saveFileToDB(task *sessionTask, fName, fItem, fMime, fCon
 		paramValMaxLen  int
 	)
 
-	for key, val := range task.reqCGIEnv {
+	for key, val := range reqCGIEnv {
 		paramName = append(paramName, key)
 		paramVal = append(paramVal, val)
 		if len(key) > paramNameMaxLen {
@@ -786,10 +813,10 @@ func (r *oracleTasker) saveFileToDB(task *sessionTask, fName, fItem, fMime, fCon
 
 	itemID := fItem
 
-	applicationID := task.reqParams.Get("p_flow_id")
-	pageID := task.reqParams.Get("p_flow_step_id")
-	sessionID := task.reqParams.Get("p_instance")
-	request := task.reqParams.Get("p_request")
+	applicationID := reqParams.Get("p_flow_id")
+	pageID := reqParams.Get("p_flow_step_id")
+	sessionID := reqParams.Get("p_instance")
+	request := reqParams.Get("p_request")
 
 	itemIDVar, err := cur.NewVar(&itemID)
 	if err != nil {
@@ -837,8 +864,8 @@ func (r *oracleTasker) saveFileToDB(task *sessionTask, fName, fItem, fMime, fCon
 	}
 	//fmt.Println(fmt.Sprintf(r.stmFileUpload, task.reqBeforeScript, task.documentTable))
 
-	step.stepStm = fmt.Sprintf(r.stmFileUpload, task.reqBeforeScript, task.reqDocumentTable)
-	step.stepStmParams = map[string]interface{}{"num_params": numParamsVar,
+	stepStm := fmt.Sprintf(r.stmFileUpload, reqBeforeScript, reqDocumentTable)
+	stepStmParams := map[string]interface{}{"num_params": numParamsVar,
 		"param_name":     paramNameVar,
 		"param_val":      paramValVar,
 		"name":           nameVar,
@@ -856,10 +883,12 @@ func (r *oracleTasker) saveFileToDB(task *sessionTask, fName, fItem, fMime, fCon
 		"sqlerrm":        sqlErrMVar,
 		"sqlerrtrace":    sqlErrTraceVar}
 
+	r.setStepInfo(stepName, stepStm, stepStmParams, false)
+
 	//	if task.reqDumpStatements {
 	//		r.dumpStm(task, step.stepStm, step.stepStmParams)
 	//	}
-	if err := r.execStm(cur, r.streamID, step.stepStm, step.stepStmParams); err != nil {
+	if err := r.execStm(cur, r.streamID, stepStm, stepStmParams); err != nil {
 		return "", err
 	}
 	sqlErrCode, err := sqlErrCodeVar.GetValue(0)
@@ -883,19 +912,30 @@ func (r *oracleTasker) saveFileToDB(task *sessionTask, fName, fItem, fMime, fCon
 		return "", err
 	}
 
-	step.stepSuccess = true
+	r.setStepInfo(stepName, stepStm, stepStmParams, true)
 	return ret.(string), nil
 }
 
-func (r *oracleTasker) openStep(stepName string) *oracleTaskerStep {
+func (r *oracleTasker) openStep(stepName string) {
+	r.mLog.Lock()
+	defer r.mLog.Unlock()
 	step := &oracleTaskerStep{stepBg: time.Now(), stepSuccess: false}
 	r.logCurr.steps[stepName] = step
-	return step
 }
 
 func (r *oracleTasker) closeStep(stepName string) {
+	r.mLog.Lock()
+	defer r.mLog.Unlock()
 	step := r.logCurr.steps[stepName]
 	step.stepFn = time.Now()
+}
+func (r *oracleTasker) setStepInfo(stepName, stepStm string, stepParams map[string]interface{}, stepSuccess bool) {
+	r.mLog.Lock()
+	defer r.mLog.Unlock()
+	step := r.logCurr.steps[stepName]
+	step.stepStm = stepStm
+	step.stepStmParams = stepParams
+	step.stepSuccess = stepSuccess
 }
 
 func (r *oracleTasker) Break() error {
@@ -1010,81 +1050,25 @@ func killSession(stm, username, password, sid, sessionID string) error {
 	return nil
 }
 
-func (r *oracleTasker) dumpError(task *sessionTask, err error) {
-	var buf bytes.Buffer
-	buf.WriteString(fmt.Sprintf("Имя пользователя : %s\n", task.reqUserName))
-	buf.WriteString(fmt.Sprintf("Строка соединения : %s\n", task.reqSID))
-	buf.WriteString(fmt.Sprintf("Дата и время возникновения : %s\n", time.Now().Format(time.RFC1123Z)))
-	buf.WriteString("******* Текст SQL  ********************************\n")
-	buf.WriteString(r.lastStm() + "\n")
-	buf.WriteString("******* Текст SQL закончен ************************\n")
-	buf.WriteString("\n")
-	buf.WriteString("******* Текст ошибки  *****************************\n")
-	buf.WriteString(err.Error() + "\n")
-	buf.WriteString("******* Текст ошибки закончен *********************\n")
-	srv.writeTraceFile(fmt.Sprintf("${log_dir}\\err_%s_${datetime}_(%s).log", task.reqUserName, r.sessID), buf.String())
-}
-
-//func (r *oracleSessionTasker) dumpStm(task *sessionTask, stm string, sqlParams map[string]interface{}) {
+//func (r *oracleTasker) dumpError(err error) {
 //	var buf bytes.Buffer
-
-//	if sqlParams != nil {
-
-//		for k, v := range sqlParams {
-//			if !(k == "ContentType" || k == "ContentLength" || k == "CustomHeaders" || k == "rc__" || k == "content__" || k == "lob__" || k == "bNextChunkExists") {
-//				name := k
-//				if !(k == "num_params" || k == "param_name" || k == "param_val" || k == "num_ext_params" || k == "ext_param_name" || k == "ext_param_val" || k == "package_name") {
-//					name = "  :" + name
-//				} else {
-//					name = "  l_" + name
-//				}
-
-//				v1 := v.(*oracle.Variable)
-//				if v1.ArrayLength() > 0 {
-//					for i := uint(1); i < v1.ArrayLength()+1; i++ {
-//						v2, _ := v1.GetValue(i - 1)
-//						rval := reflect.ValueOf(v2)
-//						switch rval.Kind() {
-//						case reflect.String:
-//							buf.WriteString(fmt.Sprintf("%s(%d) := '%s';\n", name, i, v2.(string)))
-//						case reflect.Int:
-//							buf.WriteString(fmt.Sprintf("%s(%d) := %v;\n", name, i, v2.(int)))
-//						case reflect.Int32:
-//							buf.WriteString(fmt.Sprintf("%s(%d) := %v;\n", name, i, v2.(int32)))
-//						case reflect.Int64:
-//							buf.WriteString(fmt.Sprintf("%s(%d) := %v;\n", name, i, v2.(int64)))
-//						case reflect.Ptr:
-
-//						default:
-//							log.Println(k, " ", rval.Kind())
-//							panic(rval.Kind())
-//						}
-//					}
-//				} else {
-//					v2, _ := v1.GetValue(0)
-//					rval := reflect.ValueOf(v2)
-//					switch rval.Kind() {
-//					case reflect.String:
-//						buf.WriteString(fmt.Sprintf("%s := '%s';\n", name, v2.(string)))
-//					case reflect.Int:
-//						buf.WriteString(fmt.Sprintf("%s := %v;\n", name, v2.(int)))
-//					case reflect.Int32:
-//						buf.WriteString(fmt.Sprintf("%s := %v;\n", name, v2.(int32)))
-//					case reflect.Int64:
-//						buf.WriteString(fmt.Sprintf("%s := %v;\n", name, v2.(int64)))
-//					case reflect.Ptr:
-//					default:
-//						log.Println(k, " ", rval.Kind())
-//						panic(rval.Kind())
-//					}
-//				}
-//			}
-//		}
-//	}
-//	srv.writeTraceFile(fmt.Sprintf("${log_dir}\\trace_%s_(%s)_${datetime}.log", task.reqUserName, r.sessID), fmt.Sprintf(stm, buf.String()))
+//	buf.WriteString(fmt.Sprintf("Имя пользователя : %s\n", task.reqUserName))
+//	buf.WriteString(fmt.Sprintf("Строка соединения : %s\n", task.reqSID))
+//	buf.WriteString(fmt.Sprintf("Дата и время возникновения : %s\n", time.Now().Format(time.RFC1123Z)))
+//	buf.WriteString("******* Текст SQL  ********************************\n")
+//	buf.WriteString(r.lastStm() + "\n")
+//	buf.WriteString("******* Текст SQL закончен ************************\n")
+//	buf.WriteString("\n")
+//	buf.WriteString("******* Текст ошибки  *****************************\n")
+//	buf.WriteString(err.Error() + "\n")
+//	buf.WriteString("******* Текст ошибки закончен *********************\n")
+//	//FIXME
+//	//srv.writeTraceFile(fmt.Sprintf("${log_dir}\\err_%s_${datetime}_(%s).log", task.reqUserName, r.sessID), buf.String())
 //}
 
 func (r *oracleTasker) lastStm() string {
+	r.mLog.Lock()
+	defer r.mLog.Unlock()
 	var log oracleTaskerMessageLog
 	currLog := r.logCurr
 	if currLog == nil {
@@ -1160,6 +1144,8 @@ type sessionsInfo struct {
 }
 
 func (r *oracleTasker) Info() sesInfo {
+	r.mLog.Lock()
+	defer r.mLog.Unlock()
 	var log oracleTaskerMessageLog
 	currLog := r.logCurr
 	if currLog == nil {
@@ -1200,11 +1186,11 @@ func (r *oracleTasker) Info() sesInfo {
 
 	//fmt.Println(log.task.sessionId, " ", int32(len(sSteps)+1))
 
-	return sesInfo{log.task.sessionID,
-		log.task.taskID,
-		log.task.reqSID,
-		log.task.reqUserName,
-		log.task.reqUserPass,
+	return sesInfo{log.sessionID,
+		log.taskID,
+		log.reqSID,
+		log.reqUserName,
+		log.reqUserPass,
 		r.sessID,
 		r.stateCreateDT.Format(time.RFC3339),
 		int32(len(r.logs)),
@@ -1214,8 +1200,8 @@ func (r *oracleTasker) Info() sesInfo {
 		int32(len(sSteps) + 1),
 		stm,
 		//html.EscapeString(stm),
-		log.task.reqProc,
-		log.task.reqProc,
+		log.reqProc,
+		log.reqProc,
 		r.stateIsWorking,
 	}
 }
@@ -1422,4 +1408,26 @@ func concat(str1, str2, delim string) string {
 		return str1
 	}
 	return str1 + delim + str2
+}
+
+func unMask(err error) *oracle.Error {
+	oraErr, ok := err.(*oracle.Error)
+	if ok {
+		return oraErr
+	}
+	if errg, ok := err.(*errgo.Err); ok {
+		return unMask(errg.Underlying())
+	}
+	return nil
+}
+
+func extractFileName(contentDisposition string) string {
+	r := ""
+	for _, v := range strings.Split(contentDisposition, "; ") {
+		if strings.HasPrefix(v, "filename=") {
+			_, r = filepath.Split(strings.Replace(strings.Replace(v, "filename=\"", "", -1), "\"", "", -1))
+			return r
+		}
+	}
+	return r
 }
