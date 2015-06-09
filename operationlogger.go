@@ -15,10 +15,13 @@ const (
 	opExec
 )
 
-type operation struct {
+type OracleOperation struct {
 	StreamID    string
 	OperationID uint64
 	Type        uint
+	UserName    string
+	UserPass    string
+	ConnStr     string
 	Stm         string
 	Params      map[string]interface{}
 	ClientBg    time.Time
@@ -31,10 +34,13 @@ type operation struct {
 
 var opCounter uint64
 
-func loginOp(f func(op *operation), streamID string, clientBg, clientFn time.Time, success bool) {
-	f(&operation{StreamID: streamID,
+func loginOp(f func(op *OracleOperation), streamID, userName, userPass, connStr string, clientBg, clientFn time.Time, success bool) {
+	f(&OracleOperation{StreamID: streamID,
 		OperationID: atomic.AddUint64(&opCounter, 1),
 		Type:        opLogin,
+		UserName:    userName,
+		UserPass:    userPass,
+		ConnStr:     connStr,
 		Stm:         "",
 		Params:      make(map[string]interface{}, 0),
 		ClientBg:    clientBg,
@@ -46,10 +52,13 @@ func loginOp(f func(op *operation), streamID string, clientBg, clientFn time.Tim
 	})
 }
 
-func logoutOp(f func(op *operation), streamID string, clientBg, clientFn time.Time, success bool) {
-	f(&operation{StreamID: streamID,
+func logoutOp(f func(op *OracleOperation), streamID, userName, userPass, connStr string, clientBg, clientFn time.Time, success bool) {
+	f(&OracleOperation{StreamID: streamID,
 		OperationID: atomic.AddUint64(&opCounter, 1),
 		Type:        opLogout,
+		UserName:    userName,
+		UserPass:    userPass,
+		ConnStr:     connStr,
 		Stm:         "",
 		Params:      make(map[string]interface{}, 0),
 		ClientBg:    clientBg,
@@ -61,7 +70,7 @@ func logoutOp(f func(op *operation), streamID string, clientBg, clientFn time.Ti
 	})
 }
 
-func execOp(f func(op *operation), streamID, stm string, params map[string]interface{}, clientBg, clientFn time.Time, success bool) {
+func execOp(f func(op *OracleOperation), streamID, userName, userPass, connStr, stm string, params map[string]interface{}, clientBg, clientFn time.Time, success bool) {
 	var (
 		serverBg    time.Time
 		serverFn    time.Time
@@ -120,9 +129,12 @@ func execOp(f func(op *operation), streamID, stm string, params map[string]inter
 
 	}
 
-	f(&operation{StreamID: streamID,
+	f(&OracleOperation{StreamID: streamID,
 		OperationID: atomic.AddUint64(&opCounter, 1),
-		Type:        opLogout,
+		Type:        opExec,
+		UserName:    userName,
+		UserPass:    userPass,
+		ConnStr:     connStr,
 		Stm:         stm,
 		Params:      lParams,
 		ClientBg:    clientBg,

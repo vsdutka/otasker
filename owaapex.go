@@ -1,7 +1,7 @@
 // owaapex
 package otasker
 
-func newOwaApexProcRunner() func(f func(op *operation), streamID string) OracleTasker {
+func NewOwaApexProcRunner() func(f func(op *OracleOperation), streamID string) OracleTasker {
 	const (
 		stmEvalSessionID = `
 declare
@@ -16,7 +16,6 @@ begin
     when too_many_rows then
       l_sid := null;
   end;
-  commit;
   :sid := l_sid;
   :server_fn := to_char(systimestamp, 'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM');
   :server_fn_scn := /*sys.dbms_flashback.get_system_change_number*/ 0;
@@ -155,6 +154,14 @@ end;`
 begin
   kill_session.session_id:=:sess_id;
   :ret:=kill_session.kill_session_by_session_id(:out_err_msg);
+exception
+  when others then
+    if sqlcode = -00031 then
+	  :ret := 1;
+	else
+      :ret := 0;
+      :out_err_msg := sqlerrm;
+	end if;
 end;
 `
 		stmFileUpload = `
@@ -193,7 +200,7 @@ exception
 end;`
 	)
 
-	return func(f func(op *operation), streamID string) OracleTasker {
+	return func(f func(op *OracleOperation), streamID string) OracleTasker {
 		return newOracleProcTasker(f, stmEvalSessionID, stmMain, stmGetRestChunk, stmKillSession, stmFileUpload, streamID)
 	}
 }

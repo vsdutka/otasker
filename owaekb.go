@@ -1,7 +1,7 @@
 // owaekb
 package otasker
 
-func newOwaEkbProcRunner() func(f func(op *operation), streamID string) OracleTasker {
+func NewOwaEkbProcRunner() func(f func(op *OracleOperation), streamID string) OracleTasker {
 	const (
 		stmEvalSessionID = `
 declare
@@ -16,7 +16,6 @@ begin
     when too_many_rows then
       l_sid := null;
   end;
-  commit;
   :sid := l_sid;
   :server_fn := to_char(systimestamp, 'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM');
   :server_fn_scn := /*sys.dbms_flashback.get_system_change_number*/ '0';
@@ -83,14 +82,9 @@ exception
     rollback;
     :server_fn := to_char(systimestamp, 'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM');
     :server_fn_scn := /*sys.dbms_flashback.get_system_change_number*/ 0;
-	:sqlerrcode := SQLCODE;
-	:sqlerrm := sqlerrm;
-	:sqlerrtrace := DBMS_UTILITY.FORMAT_ERROR_BACKTRACE();
-
-	SELECT :sqlerrm||' NLS_DATE_FORMAT='||value||' NLS_LANG='||USERENV ('language')
-	into :sqlerrm
-    FROM   nls_session_parameters
-    WHERE  parameter = 'NLS_DATE_FORMAT';
+    :sqlerrcode := SQLCODE;
+    :sqlerrm := sqlerrm;
+    :sqlerrtrace := DBMS_UTILITY.FORMAT_ERROR_BACKTRACE();
 end;`
 
 		stmGetRestChunk = `begin
@@ -110,14 +104,22 @@ exception
     rollback;
     :server_fn := to_char(systimestamp, 'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM');
     :server_fn_scn := /*sys.dbms_flashback.get_system_change_number*/ 0;
-	:sqlerrcode := SQLCODE;
-	:sqlerrm := sqlerrm;
-	:sqlerrtrace := DBMS_UTILITY.FORMAT_ERROR_BACKTRACE();
+    :sqlerrcode := SQLCODE;
+    :sqlerrm := sqlerrm;
+    :sqlerrtrace := DBMS_UTILITY.FORMAT_ERROR_BACKTRACE();
 end;`
 		stmKillSession = `
 begin
   wskill_session.ev_Session_ID:=:sess_id;
   :ret:=wskill_session.e_kill_session_by_session_id(:out_err_msg);
+exception
+  when others then
+    if sqlcode = -00031 then
+	  :ret := 1;
+	else
+      :ret := 0;
+      :out_err_msg := sqlerrm;
+	end if;
 end;
 `
 		stmFileUpload = `
@@ -144,13 +146,13 @@ exception
     rollback;
     :server_fn := to_char(systimestamp, 'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM');
     :server_fn_scn := /*sys.dbms_flashback.get_system_change_number*/ 0;
-	:sqlerrcode := -20000;
-	:sqlerrm := 'Unable to upload file "'||:name||'" '||sqlerrm;
-	:sqlerrtrace := DBMS_UTILITY.FORMAT_ERROR_BACKTRACE();
+    :sqlerrcode := -20000;
+    :sqlerrm := 'Unable to upload file "'||:name||'" '||sqlerrm;
+    :sqlerrtrace := DBMS_UTILITY.FORMAT_ERROR_BACKTRACE();
 end;`
 	)
 
-	return func(f func(op *operation), streamID string) OracleTasker {
+	return func(f func(op *OracleOperation), streamID string) OracleTasker {
 		return newOracleProcTasker(f, stmEvalSessionID, stmMain, stmGetRestChunk, stmKillSession, stmFileUpload, streamID)
 	}
 }

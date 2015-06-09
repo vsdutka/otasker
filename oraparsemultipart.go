@@ -12,7 +12,7 @@ import (
 	"os"
 )
 
-func parseMultipartFormEx(r *http.Request, maxMemory int64) (f *Form, err error) {
+func ParseMultipartFormEx(r *http.Request, maxMemory int64) (f *Form, err error) {
 	if r.MultipartForm != nil {
 		return nil, errors.New("Для разбора запроса необходимо использовать ReadFormEx")
 	}
