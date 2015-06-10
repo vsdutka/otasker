@@ -75,7 +75,8 @@ type oracleTaskerMessageLog struct {
 }
 
 type oracleTasker struct {
-	sync.Mutex        //включается только при изменении данных, используемых в Break() и Info()
+	sync.Mutex                   //включается только при изменении данных, используемых в Break() и Info()
+	cafMutex          sync.Mutex // требуется для синхронизации разрушения объекта C(lose )A(nd )F(ree )Mutes
 	sendOp            func(op *OracleOperation)
 	streamID          string
 	conn              *oracle.Connection
@@ -114,6 +115,9 @@ func newOracleProcTasker(f func(op *OracleOperation), stmEvalSessionID, stmMain,
 }
 
 func (r *oracleTasker) CloseAndFree() error {
+	r.cafMutex.Lock()
+	defer r.cafMutex.Unlock()
+
 	r.descr.Clear()
 	r.descr = nil
 	if r.conn != nil {
@@ -135,6 +139,8 @@ func (r *oracleTasker) Run(sessionID, taskID, userName, userPass, connStr,
 	reqFiles *Form, dumpErrorFileName string) OracleTaskResult {
 	var bgMem runtime.MemStats
 	runtime.ReadMemStats(&bgMem)
+
+	r.cafMutex.Lock()
 
 	func() {
 		r.Lock()
@@ -167,6 +173,8 @@ func (r *oracleTasker) Run(sessionID, taskID, userName, userPass, connStr,
 			r.stateLastFinishDT = time.Now()
 		}()
 
+		r.cafMutex.Unlock()
+
 		var fnMem runtime.MemStats
 		runtime.ReadMemStats(&fnMem)
 		//		log.Println("bg Alloc       => ", bgMem.Alloc)
@@ -190,11 +198,13 @@ func (r *oracleTasker) Run(sessionID, taskID, userName, userPass, connStr,
 	var res = OracleTaskResult{}
 	if err := r.connect(userName, userPass, connStr); err != nil {
 		res.StatusCode, res.Content = packError(err)
+		// Формируем дамп до закрытия соединения, чтобы получить корректный запрос из последнего шага
+		r.dumpError(userName, connStr, dumpErrorFileName, err)
 		if res.StatusCode == StatusRequestWasInterrupted {
 			//Если произошла ошибка, всегда закрываем соединение с БД
 			r.disconnect()
 		}
-		r.dumpError(userName, connStr, dumpErrorFileName, err)
+
 		res.Duration = int64(time.Since(bg) / time.Second)
 		return res
 	}
@@ -202,11 +212,12 @@ func (r *oracleTasker) Run(sessionID, taskID, userName, userPass, connStr,
 	if err := r.run(&res, paramStoreProc, beforeScript, afterScript, documentTable,
 		cgiEnv, procName, urlParams, reqFiles); err != nil {
 		res.StatusCode, res.Content = packError(err)
+		// Формируем дамп до закрытия соединения, чтобы получить корректный запрос из последнего шага
+		r.dumpError(userName, connStr, dumpErrorFileName, err)
 		if res.StatusCode == StatusRequestWasInterrupted {
 			//Если произошла ошибка, всегда закрываем соединение с БД
 			r.disconnect()
 		}
-		r.dumpError(userName, connStr, dumpErrorFileName, err)
 		res.Duration = int64(time.Since(bg) / time.Second)
 		return res
 	}
@@ -216,73 +227,72 @@ func (r *oracleTasker) Run(sessionID, taskID, userName, userPass, connStr,
 }
 
 func (r *oracleTasker) connect(username, userpass, connstr string) (err error) {
-	const (
-		stepName = "001 - connect"
-	)
-	r.openStep(stepName)
-	defer r.closeStep(stepName)
-	r.setStepInfo(stepName, "connect", nil, false)
 
 	if (r.conn == nil) || (r.connUserName != username) || (r.connUserPass != userpass) || (r.connStr != connstr) {
 		r.disconnect()
 
-		bg := time.Now()
-		r.conn, err = oracle.NewConnection(username, userpass, connstr, false)
-		if err != nil {
-			loginOp(r.sendOp, r.streamID, username, userpass, connstr, bg, time.Now(), false)
-			// Если выходим с ошибкой, то в вызывающей процедуре будет вызван disconnect()
-			return err
-		}
-		loginOp(r.sendOp, r.streamID, username, userpass, connstr, bg, time.Now(), true)
-		r.connUserName = username
-		r.connUserPass = userpass
-		r.connStr = connstr
-		// Соединение с БД прошло успешно.
-		if err = r.evalSessionID(); err != nil {
-			// Если выходим с ошибкой, то в вызывающей процедуре будет вызван disconnect()
-			return err
-		}
-
+		return func() error {
+			stepName := r.openStep("connect")
+			defer r.closeStep(stepName)
+			r.setStepInfo(stepName, "connect", nil, false)
+			bg := time.Now()
+			r.conn, err = oracle.NewConnection(username, userpass, connstr, false)
+			if err != nil {
+				loginOp(r.sendOp, r.streamID, username, userpass, connstr, bg, time.Now(), false)
+				// Если выходим с ошибкой, то в вызывающей процедуре будет вызван disconnect()
+				return err
+			}
+			loginOp(r.sendOp, r.streamID, username, userpass, connstr, bg, time.Now(), true)
+			r.connUserName = username
+			r.connUserPass = userpass
+			r.connStr = connstr
+			// Соединение с БД прошло успешно.
+			if err = r.evalSessionID(); err != nil {
+				// Если выходим с ошибкой, то в вызывающей процедуре будет вызван disconnect()
+				return err
+			}
+			r.setStepInfo(stepName, "connect", nil, true)
+			return nil
+		}()
 	} else {
 		if !r.conn.IsConnected() {
 			panic("Сюда приходить никогда не должны !!!")
 		}
 	}
-	r.setStepInfo(stepName, "connect", nil, true)
 	return nil
 }
 
 func (r *oracleTasker) disconnect() (err error) {
-	const (
-		stepName = "009 - disconnect"
-	)
-
-	r.openStep(stepName)
-	r.setStepInfo(stepName, "disconnect", nil, false)
-	r.Lock()
-
-	defer func() {
-		r.conn = nil
-		r.connUserName = ""
-		r.connUserPass = ""
-		r.connStr = ""
-		r.sessID = ""
-		r.Unlock()
-		r.setStepInfo(stepName, "connect", nil, true)
-		r.closeStep(stepName)
-
-	}()
-
 	if r.conn != nil {
-		bg := time.Now()
-		err = r.conn.Close()
-		if err != nil {
-			logoutOp(r.sendOp, r.streamID, r.connUserName, r.connUserPass, r.connStr, bg, time.Now(), false)
-			return err
-		}
-		logoutOp(r.sendOp, r.streamID, r.connUserName, r.connUserPass, r.connStr, bg, time.Now(), true)
-	}
+		if r.conn.IsConnected() {
+			stepName := r.openStep("disconnect")
+			r.setStepInfo(stepName, "disconnect", nil, false)
 
+			r.Lock()
+
+			defer func() {
+				r.conn = nil
+				r.connUserName = ""
+				r.connUserPass = ""
+				r.connStr = ""
+				r.sessID = ""
+				r.Unlock()
+				r.setStepInfo(stepName, "disconnect", nil, true)
+				r.closeStep(stepName)
+
+			}()
+
+			if r.conn != nil {
+				bg := time.Now()
+				err = r.conn.Close()
+				if err != nil {
+					logoutOp(r.sendOp, r.streamID, r.connUserName, r.connUserPass, r.connStr, bg, time.Now(), false)
+					return err
+				}
+				logoutOp(r.sendOp, r.streamID, r.connUserName, r.connUserPass, r.connStr, bg, time.Now(), true)
+			}
+		}
+	}
 	return nil
 }
 
@@ -321,10 +331,7 @@ func (r *oracleTasker) execStm(cur *oracle.Cursor, streamID, stm string, params 
 }
 
 func (r *oracleTasker) evalSessionID() error {
-	const (
-		stepName = "002 - evalSessionID"
-	)
-	r.openStep(stepName)
+	stepName := r.openStep("evalSessionID")
 
 	cur := r.conn.NewCursor()
 	defer func() { cur.Close(); r.closeStep(stepName) }()
@@ -354,7 +361,6 @@ func (r *oracleTasker) evalSessionID() error {
 func (r *oracleTasker) run(res *OracleTaskResult, paramStoreProc, beforeScript, afterScript, documentTable string,
 	cgiEnv map[string]string, procName string, urlParams url.Values, reqFiles *Form) error {
 	const (
-		stepName      = "004 - run"
 		stmParamsInit = `
   l_num_params := :num_params;
   l_param_name := :param_name;
@@ -381,7 +387,7 @@ func (r *oracleTasker) run(res *OracleTaskResult, paramStoreProc, beforeScript, 
 		sqlErrMVar          *oracle.Variable
 		sqlErrTraceVar      *oracle.Variable
 	)
-	r.openStep(stepName)
+	stepName := r.openStep("run")
 	cur := r.conn.NewCursor()
 	defer func() { cur.Close(); r.closeStep(stepName) }()
 
@@ -646,9 +652,6 @@ func (r *oracleTasker) run(res *OracleTaskResult, paramStoreProc, beforeScript, 
 }
 
 func (r *oracleTasker) getRestChunks(res *OracleTaskResult) error {
-	const (
-		stepName = "005 - getRestChunks"
-	)
 	var (
 		err                 error
 		bNextChunkExists    int64
@@ -658,7 +661,7 @@ func (r *oracleTasker) getRestChunks(res *OracleTaskResult) error {
 		sqlErrMVar          *oracle.Variable
 		sqlErrTraceVar      *oracle.Variable
 	)
-	r.openStep(stepName)
+	stepName := r.openStep("getRestChunks")
 	cur := r.conn.NewCursor()
 	defer func() { cur.Close(); r.closeStep(stepName) }()
 
@@ -752,22 +755,8 @@ func (r *oracleTasker) saveFile(paramStoreProc, beforeScript, afterScript, docum
 
 func (r *oracleTasker) saveFileToDB(paramStoreProc, beforeScript, afterScript, documentTable string,
 	cgiEnv map[string]string, urlParams url.Values, fName, fItem, fMime, fContentType string, fContent []byte) (string, error) {
-	const (
-		stepName = "003 - saveFileToDB"
-		//		stmParamsInit = `
-		//  l_num_params     := :num_params;
-		//  l_param_name     := :param_name;
-		//  l_param_val      := :param_val;
-		//  l_item_id        := :item_id;
-		//  l_application_id := :application_id;
-		//  l_page_id        := :page_id;
-		//  l_session_id     := :session_id;
-		//  l_request        := :request;
-		//  l_doc_size       := :doc_size;
-		//  l_content_type   := :content_type;
-		//`
-	)
-	r.openStep(stepName)
+
+	stepName := r.openStep("saveFileToDB")
 	cur := r.conn.NewCursor()
 	defer func() { cur.Close(); r.closeStep(stepName) }()
 
@@ -940,11 +929,13 @@ func (r *oracleTasker) saveFileToDB(paramStoreProc, beforeScript, afterScript, d
 	return ret.(string), nil
 }
 
-func (r *oracleTasker) openStep(stepName string) {
+func (r *oracleTasker) openStep(stepType string) string {
 	r.Lock()
 	defer r.Unlock()
 	step := &oracleTaskerStep{stepBg: time.Now(), stepSuccess: false}
+	stepName := fmt.Sprintf("%03d - %s", len(r.logCurr.steps)+1, stepType)
 	r.logCurr.steps[stepName] = step
+	return stepName
 }
 
 func (r *oracleTasker) closeStep(stepName string) {

@@ -87,7 +87,7 @@ func execOp(f func(op *OracleOperation), streamID, userName, userPass, connStr, 
 				if err != nil {
 					panic(err)
 				}
-				paramVal = append(paramVal, paramValItem)
+				paramVal = append(paramVal, reflect.ValueOf(paramValItem))
 			}
 			lParams[key] = paramVal
 		} else {
@@ -112,7 +112,7 @@ func execOp(f func(op *OracleOperation), streamID, userName, userPass, connStr, 
 					}
 					lParams[key] = buf
 				} else {
-					lParams[key] = paramVal
+					lParams[key] = reflect.ValueOf(paramVal)
 					switch key {
 					case "server_bg":
 						serverBg, _ = time.Parse("2006-01-02 15:04:05.999999999 -07:00", paramVal.(string))
