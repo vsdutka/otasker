@@ -254,11 +254,11 @@ func (r *oracleTasker) connect(username, userpass, connstr string) (err error) {
 			r.setStepInfo(stepName, "connect", nil, true)
 			return nil
 		}()
-	} else {
-		if !r.conn.IsConnected() {
-			panic("Сюда приходить никогда не должны !!!")
-		}
 	}
+	if !r.conn.IsConnected() {
+		panic("Сюда приходить никогда не должны !!!")
+	}
+
 	return nil
 }
 
@@ -1239,7 +1239,7 @@ func prepareParam(cur *oracle.Cursor, paramName string, paramValue []string, par
 							return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
 						}
 						params[paramName+"_s"] = lVar
-						for i, _ := range paramValue {
+						for i := range paramValue {
 							*paramsForStore = *paramsForStore + fmt.Sprintf("  %s('%s', :%s_s(%d));\n", paramStoreProc, paramName, paramName, i+1)
 						}
 
@@ -1258,7 +1258,7 @@ func prepareParam(cur *oracle.Cursor, paramName string, paramValue []string, par
 							return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
 						}
 						params[paramName+"_s"] = lVar
-						for i, _ := range paramValue {
+						for i := range paramValue {
 							*paramsForStore = *paramsForStore + fmt.Sprintf("  %s('%s', :%s_s(%d));\n", paramStoreProc, paramName, paramName, i+1)
 						}
 					}
@@ -1276,7 +1276,7 @@ func prepareParam(cur *oracle.Cursor, paramName string, paramValue []string, par
 							return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
 						}
 						params[paramName+"_s"] = lVar
-						for i, _ := range paramValue {
+						for i := range paramValue {
 							*paramsForStore = *paramsForStore + fmt.Sprintf("  %s('%s', :%s_s(%d));\n", paramStoreProc, paramName, paramName, i+1)
 						}
 					}
