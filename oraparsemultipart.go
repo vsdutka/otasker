@@ -34,6 +34,7 @@ func ParseMultipartFormEx(r *http.Request, maxMemory int64) (f *Form, err error)
 	}
 	for k, v := range f.Value {
 		r.Form[k] = append(r.Form[k], v...)
+		r.PostForm[k] = append(r.PostForm[k], v...)
 	}
 
 	return f, nil

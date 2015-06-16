@@ -77,7 +77,7 @@ type oracleTaskerMessageLog struct {
 type oracleTasker struct {
 	sync.Mutex                   //включается только при изменении данных, используемых в Break() и Info()
 	cafMutex          sync.Mutex // требуется для синхронизации разрушения объекта C(lose )A(nd )F(ree )Mutes
-	sendOp            func(op *OracleOperation)
+	opLoggerName      string
 	streamID          string
 	conn              *oracle.Connection
 	descr             OracleDescriber
@@ -97,9 +97,9 @@ type oracleTasker struct {
 	stmFileUpload     string
 }
 
-func newOracleProcTasker(f func(op *OracleOperation), stmEvalSessionID, stmMain, stmGetRestChunk, stmKillSession, stmFileUpload, streamID string) OracleTasker {
+func newOracleProcTasker(operationLoggerName, stmEvalSessionID, stmMain, stmGetRestChunk, stmKillSession, stmFileUpload, streamID string) OracleTasker {
 	r := oracleTasker{}
-	r.sendOp = f
+	r.opLoggerName = operationLoggerName
 	r.streamID = streamID
 	r.stateIsWorking = false
 	r.stateCreateDT = time.Now()
@@ -123,10 +123,10 @@ func (r *oracleTasker) CloseAndFree() error {
 	if r.conn != nil {
 		bg := time.Now()
 		if err := r.conn.Close(); err != nil {
-			logoutOp(r.sendOp, r.streamID, r.connUserName, r.connUserPass, r.connStr, bg, time.Now(), false)
+			logoutOp(r.opLoggerName, r.streamID, r.connUserName, r.connUserPass, r.connStr, bg, time.Now(), false)
 			return err
 		}
-		logoutOp(r.sendOp, r.streamID, r.connUserName, r.connUserPass, r.connStr, bg, time.Now(), true)
+		logoutOp(r.opLoggerName, r.streamID, r.connUserName, r.connUserPass, r.connStr, bg, time.Now(), true)
 	}
 	r.logCurr = nil
 	r.logs = nil
@@ -238,11 +238,11 @@ func (r *oracleTasker) connect(username, userpass, connstr string) (err error) {
 			bg := time.Now()
 			r.conn, err = oracle.NewConnection(username, userpass, connstr, false)
 			if err != nil {
-				loginOp(r.sendOp, r.streamID, username, userpass, connstr, bg, time.Now(), false)
+				loginOp(r.opLoggerName, r.streamID, username, userpass, connstr, bg, time.Now(), false)
 				// Если выходим с ошибкой, то в вызывающей процедуре будет вызван disconnect()
 				return err
 			}
-			loginOp(r.sendOp, r.streamID, username, userpass, connstr, bg, time.Now(), true)
+			loginOp(r.opLoggerName, r.streamID, username, userpass, connstr, bg, time.Now(), true)
 			r.connUserName = username
 			r.connUserPass = userpass
 			r.connStr = connstr
@@ -286,10 +286,10 @@ func (r *oracleTasker) disconnect() (err error) {
 				bg := time.Now()
 				err = r.conn.Close()
 				if err != nil {
-					logoutOp(r.sendOp, r.streamID, r.connUserName, r.connUserPass, r.connStr, bg, time.Now(), false)
+					logoutOp(r.opLoggerName, r.streamID, r.connUserName, r.connUserPass, r.connStr, bg, time.Now(), false)
 					return err
 				}
-				logoutOp(r.sendOp, r.streamID, r.connUserName, r.connUserPass, r.connStr, bg, time.Now(), true)
+				logoutOp(r.opLoggerName, r.streamID, r.connUserName, r.connUserPass, r.connStr, bg, time.Now(), true)
 			}
 		}
 	}
@@ -323,10 +323,10 @@ func (r *oracleTasker) execStm(cur *oracle.Cursor, streamID, stm string, params 
 	params["server_fn_scn"] = serverFnScnVar
 
 	if err := cur.Execute(stm, nil, params); err != nil {
-		execOp(r.sendOp, streamID, r.connUserName, r.connUserPass, r.connStr, stm, params, bg, time.Now(), false)
+		execOp(r.opLoggerName, streamID, r.connUserName, r.connUserPass, r.connStr, stm, params, bg, time.Now(), false)
 		return err
 	}
-	execOp(r.sendOp, streamID, r.connUserName, r.connUserPass, r.connStr, stm, params, bg, time.Now(), true)
+	execOp(r.opLoggerName, streamID, r.connUserName, r.connUserPass, r.connStr, stm, params, bg, time.Now(), true)
 	return nil
 }
 

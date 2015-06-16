@@ -1,7 +1,7 @@
 // owaekb
 package otasker
 
-func NewOwaEkbProcRunner() func(f func(op *OracleOperation), streamID string) OracleTasker {
+func NewOwaEkbProcRunner() func(operationLoggerName, streamID string) OracleTasker {
 	const (
 		stmEvalSessionID = `
 declare
@@ -152,7 +152,7 @@ exception
 end;`
 	)
 
-	return func(f func(op *OracleOperation), streamID string) OracleTasker {
-		return newOracleProcTasker(f, stmEvalSessionID, stmMain, stmGetRestChunk, stmKillSession, stmFileUpload, streamID)
+	return func(operationLoggerName, streamID string) OracleTasker {
+		return newOracleProcTasker(operationLoggerName, stmEvalSessionID, stmMain, stmGetRestChunk, stmKillSession, stmFileUpload, streamID)
 	}
 }
