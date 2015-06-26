@@ -7,7 +7,6 @@ func NewOwaApexProcRunner() func(operationLoggerName, streamID string) OracleTas
 declare
   l_sid varchar2(40);
 begin
-  :server_bg := to_char(systimestamp, 'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM');
   begin
     l_sid:=kill_session.get_current_session_id;
   exception
@@ -16,14 +15,11 @@ begin
     when too_many_rows then
       l_sid := null;
   end;
-  :sid := l_sid;
-  :server_fn := to_char(systimestamp, 'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM');
-  :server_fn_scn := /*sys.dbms_flashback.get_system_change_number*/ 0;
 end;
 `
 		stmMain = `
 Declare
-  rc__ number;
+  rc__ number(2,0);
   l_num_params number;
   l_param_name owa.vc_arr;
   l_param_val owa.vc_arr;
@@ -33,7 +29,6 @@ Declare
   l_package_name varchar(240);
   %s
 Begin
-  :server_bg := to_char(systimestamp, 'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM');
   /* >> Инициализация параметров */
 %s
   /* << Инициализация параметров */
@@ -114,38 +109,29 @@ Begin
   end if;
   commit;
   :rc__ := rc__;
-  :server_fn := to_char(systimestamp, 'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM');
-  :server_fn_scn := /*sys.dbms_flashback.get_system_change_number*/ 0;
   :sqlerrcode := 0;
   :sqlerrm := '';
   :sqlerrtrace := '';
 exception
   when others then
     rollback;
-    :server_fn := to_char(systimestamp, 'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM');
-    :server_fn_scn := /*sys.dbms_flashback.get_system_change_number*/ 0;
     :sqlerrcode := SQLCODE;
     :sqlerrm := sqlerrm;
     :sqlerrtrace := DBMS_UTILITY.FORMAT_ERROR_BACKTRACE();
 end;`
 
 		stmGetRestChunk = `begin
-  :server_bg := to_char(systimestamp, 'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM');
   :Data:=hrslt.GET32000(:bNextChunkExists);
   if :bNextChunkExists = 0 then
     dbms_session.modify_package_state(dbms_session.reinitialize);
   end if;
   commit;
-  :server_fn := to_char(systimestamp, 'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM');
-  :server_fn_scn := /*sys.dbms_flashback.get_system_change_number*/ 0;
   :sqlerrcode := 0;
   :sqlerrm := '';
   :sqlerrtrace := '';
 exception
   when others then
     rollback;
-    :server_fn := to_char(systimestamp, 'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM');
-    :server_fn_scn := /*sys.dbms_flashback.get_system_change_number*/ 0;
     :sqlerrcode := SQLCODE;
     :sqlerrm := sqlerrm;
     :sqlerrtrace := DBMS_UTILITY.FORMAT_ERROR_BACKTRACE();
@@ -170,7 +156,6 @@ declare
   l_pt_dc_id varchar2(40) := null; /*Для совместимости*/
   l_content_type varchar2(240) := :content_type; /*Для совместимости*/
 begin
-  :server_bg := to_char(systimestamp, 'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM');
   owa.init_cgi_env(:num_params, :param_name, :param_val);
 /*%s %s*/
   :ret_name := apex_util.set_blob
@@ -184,16 +169,12 @@ begin
                   ,p_session_id=>:session_id
                   ,p_request=>:request
                 );
-  :server_fn := to_char(systimestamp, 'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM');
-  :server_fn_scn := /*sys.dbms_flashback.get_system_change_number*/ 0;
   :sqlerrcode := 0;
   :sqlerrm := '';
   :sqlerrtrace := '';
 exception
   when others then
     rollback;
-    :server_fn := to_char(systimestamp, 'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM');
-    :server_fn_scn := /*sys.dbms_flashback.get_system_change_number*/ 0;
     :sqlerrcode := -20000;
     :sqlerrm := 'Unable to upload file "'||:name||'" '||sqlerrm;
     :sqlerrtrace := DBMS_UTILITY.FORMAT_ERROR_BACKTRACE();

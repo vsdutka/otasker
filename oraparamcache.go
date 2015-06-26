@@ -2,6 +2,7 @@
 package otasker
 
 import (
+	"github.com/vsdutka/oracleex"
 	"gopkg.in/errgo.v1"
 	"gopkg.in/goracle.v1/oracle"
 	"strings"
@@ -66,7 +67,7 @@ type OracleDescribedProc interface {
 
 // OracleDescriber - интерфейс для работы с кешем параметров процедур в сессии
 type OracleDescriber interface {
-	Describe(r *oracleTasker, conn *oracle.Connection, procName string) (OracleDescribedProc, error)
+	Describe(r *oracleTasker, conn *oracleex.Connection, procName string) (OracleDescribedProc, error)
 	Clear()
 }
 
@@ -88,7 +89,7 @@ type oracleDescriber struct {
 	procs map[string]oracleDescribedProc
 }
 
-func (d *oracleDescriber) Describe(r *oracleTasker, conn *oracle.Connection, procName string) (OracleDescribedProc, error) {
+func (d *oracleDescriber) Describe(r *oracleTasker, conn *oracleex.Connection, procName string) (OracleDescribedProc, error) {
 	const (
 		stm = `declare
   lstatus varchar2(40);
@@ -105,7 +106,6 @@ func (d *oracleDescriber) Describe(r *oracleTasker, conn *oracle.Connection, pro
   ex1 exception;
   pragma exception_init(ex1, -06564);
 begin
-  :server_bg := to_char(systimestamp, 'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM');
   DBMS_UTILITY.NAME_RESOLVE(:proc_name,1,lschema,lpart1,lpart2,ldblink,lpart1_type,lobject_number);
 
   if lpart1_type = 9 then
@@ -154,9 +154,6 @@ begin
 	end if;
 	:len_ := llen;
   end if;
-
-  :server_fn := to_char(systimestamp, 'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM');
-  :server_fn_scn := /*sys.dbms_flashback.get_system_change_number*/ 0;
   commit;
 exception
   when others then
@@ -189,8 +186,8 @@ end;`
 		spare          = make([]interface{}, 4000)
 		packageName    string
 		lastChangeTime time.Time
-		updated        int
-		arrayLen       int
+		updated        int32
+		arrayLen       int32
 
 		procNameVar       *oracle.Variable
 		overloadVar       *oracle.Variable
@@ -293,7 +290,7 @@ end;`
 		return nil, errgo.Newf("error creating variable for %s(%T): %s", arrayLen, arrayLen, err)
 	}
 
-	if err := r.execStm(cur, r.streamID, stm, map[string]interface{}{"proc_name": procNameVar,
+	if err := cur.Execute(stm, nil, map[string]interface{}{"proc_name": procNameVar,
 		"overload":      overloadVar,
 		"position":      positionVar,
 		"level":         levelVar,
@@ -322,7 +319,7 @@ end;`
 		dpp.packageName = packageName
 		dpp.timestamp = lastChangeTime
 		dpp.params = make(map[string]oracleDescribedProcParam)
-		for i := 0; i < arrayLen; i++ {
+		for i := 0; i < int(arrayLen); i++ {
 			var (
 				paramName        string
 				paramDataType    int32

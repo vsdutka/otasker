@@ -16,6 +16,7 @@ func ParseMultipartFormEx(r *http.Request, maxMemory int64) (f *Form, err error)
 	if r.MultipartForm != nil {
 		return nil, errors.New("Для разбора запроса необходимо использовать ReadFormEx")
 	}
+
 	if r.Form == nil {
 		err := r.ParseForm()
 		if err != nil {
