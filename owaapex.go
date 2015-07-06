@@ -15,6 +15,7 @@ begin
     when too_many_rows then
       l_sid := null;
   end;
+  :sid := l_sid;
 end;
 `
 		stmMain = `

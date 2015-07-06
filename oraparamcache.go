@@ -308,7 +308,7 @@ end;`
 		"updated":       updatedVar,
 		"len_":          arrayLenVar,
 	}); err != nil {
-		return nil, err
+		return nil, errgo.Newf("Невозможно получить описание для \"%s\"\nОшибка: %s", procName, err.Error())
 	}
 
 	if updated == 1 {
