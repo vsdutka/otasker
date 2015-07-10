@@ -208,25 +208,25 @@ end;`
 		arrayLenVar       *oracle.Variable
 	)
 
-	defer func() {
-		procNameVar.Free()
-		overloadVar.Free()
-		positionVar.Free()
-		levelVar.Free()
-		argumentNameVar.Free()
-		datatypeVar.Free()
-		defaultValueVar.Free()
-		inOutVar.Free()
-		lengthVar.Free()
-		precisionVar.Free()
-		scaleVar.Free()
-		radixVar.Free()
-		spareVar.Free()
-		packageNameVar.Free()
-		lastChangeTimeVar.Free()
-		updatedVar.Free()
-		arrayLenVar.Free()
-	}()
+	//	defer func() {
+	//		procNameVar.Free()
+	//		overloadVar.Free()
+	//		positionVar.Free()
+	//		levelVar.Free()
+	//		argumentNameVar.Free()
+	//		datatypeVar.Free()
+	//		defaultValueVar.Free()
+	//		inOutVar.Free()
+	//		lengthVar.Free()
+	//		precisionVar.Free()
+	//		scaleVar.Free()
+	//		radixVar.Free()
+	//		spareVar.Free()
+	//		packageNameVar.Free()
+	//		lastChangeTimeVar.Free()
+	//		updatedVar.Free()
+	//		arrayLenVar.Free()
+	//	}()
 
 	dpp, ok := d.procs[procName]
 	if !ok {
@@ -238,57 +238,87 @@ end;`
 	if procNameVar, err = cur.NewVar(&procName); err != nil {
 		return nil, errgo.Newf("error creating variable for %s(%T): %s", procName, procName, err)
 	}
+	defer procNameVar.Free()
 
 	if overloadVar, err = cur.NewArrayVar(oracle.Int32VarType, overload, 0); err != nil {
 		return nil, errgo.Newf("error creating variable for %s(%T): %s", overload, overload, err)
 	}
+	defer overloadVar.Free()
+
 	if positionVar, err = cur.NewArrayVar(oracle.Int32VarType, position, 0); err != nil {
 		return nil, errgo.Newf("error creating variable for %s(%T): %s", position, position, err)
 	}
+	defer positionVar.Free()
+
 	if levelVar, err = cur.NewArrayVar(oracle.Int32VarType, level, 0); err != nil {
 		return nil, errgo.Newf("error creating variable for %s(%T): %s", level, level, err)
 	}
+	defer levelVar.Free()
+
 	if argumentNameVar, err = cur.NewArrayVar(oracle.StringVarType, argumentName, 30); err != nil {
 		return nil, errgo.Newf("error creating variable for %s(%T): %s", argumentName, argumentName, err)
 	}
+	defer argumentNameVar.Free()
+
 	if datatypeVar, err = cur.NewArrayVar(oracle.Int32VarType, datatype, 0); err != nil {
 		return nil, errgo.Newf("error creating variable for %s(%T): %s", datatype, datatype, err)
 	}
+	defer datatypeVar.Free()
+
 	if defaultValueVar, err = cur.NewArrayVar(oracle.Int32VarType, defaultValue, 0); err != nil {
 		return nil, errgo.Newf("error creating variable for %s(%T): %s", defaultValue, defaultValue, err)
 	}
+	defer defaultValueVar.Free()
+
 	if inOutVar, err = cur.NewArrayVar(oracle.Int32VarType, inOut, 0); err != nil {
 		return nil, errgo.Newf("error creating variable for %s(%T): %s", inOut, inOut, err)
 	}
+	defer inOutVar.Free()
+
 	if lengthVar, err = cur.NewArrayVar(oracle.Int32VarType, length, 0); err != nil {
 		return nil, errgo.Newf("error creating variable for %s(%T): %s", length, length, err)
 	}
+	defer lengthVar.Free()
+
 	if precisionVar, err = cur.NewArrayVar(oracle.Int32VarType, precision, 0); err != nil {
 		return nil, errgo.Newf("error creating variable for %s(%T): %s", precision, precision, err)
 	}
+	defer precisionVar.Free()
+
 	if scaleVar, err = cur.NewArrayVar(oracle.Int32VarType, scale, 0); err != nil {
 		return nil, errgo.Newf("error creating variable for %s(%T): %s", scale, scale, err)
 	}
+	defer scaleVar.Free()
+
 	if radixVar, err = cur.NewArrayVar(oracle.Int32VarType, radix, 0); err != nil {
 		return nil, errgo.Newf("error creating variable for %s(%T): %s", radix, radix, err)
 	}
+	defer radixVar.Free()
+
 	if spareVar, err = cur.NewArrayVar(oracle.Int32VarType, spare, 0); err != nil {
 		return nil, errgo.Newf("error creating variable for %s(%T): %s", spare, spare, err)
 	}
+	defer spareVar.Free()
 
 	if packageNameVar, err = cur.NewVar(&packageName); err != nil {
 		return nil, errgo.Newf("error creating variable for %s(%T): %s", packageName, packageName, err)
 	}
+	defer packageNameVar.Free()
 
 	if lastChangeTimeVar, err = cur.NewVar(&lastChangeTime); err != nil {
 		return nil, errgo.Newf("error creating variable for %s(%T): %s", lastChangeTime, lastChangeTime, err)
 	}
+	defer lastChangeTimeVar.Free()
+
 	if updatedVar, err = cur.NewVar(&updated); err != nil {
 		return nil, errgo.Newf("error creating variable for %s(%T): %s", updated, updated, err)
 	}
+	defer updatedVar.Free()
+
 	if arrayLenVar, err = cur.NewVar(&arrayLen); err != nil {
 		return nil, errgo.Newf("error creating variable for %s(%T): %s", arrayLen, arrayLen, err)
 	}
+	defer arrayLenVar.Free()
 
 	if err := cur.Execute(stm, nil, map[string]interface{}{"proc_name": procNameVar,
 		"overload":      overloadVar,
