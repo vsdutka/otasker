@@ -2,6 +2,7 @@
 package otasker
 
 import (
+	//"fmt"
 	"github.com/vsdutka/oracleex"
 	"gopkg.in/errgo.v1"
 	"gopkg.in/goracle.v1/oracle"
@@ -78,15 +79,19 @@ type oracleDescribedProcParam struct {
 	length      int32
 }
 
+var dppFree = sync.Pool{
+	New: func() interface{} { return new(oracleDescribedProcParam) },
+}
+
 type oracleDescribedProc struct {
 	timestamp   time.Time
 	packageName string
-	params      map[string]oracleDescribedProcParam
+	params      map[string]*oracleDescribedProcParam
 }
 
 type oracleDescriber struct {
 	sync.Mutex
-	procs map[string]oracleDescribedProc
+	procs map[string]*oracleDescribedProc
 }
 
 func (d *oracleDescriber) Describe(r *oracleTasker, conn *oracleex.Connection, procName string) (OracleDescribedProc, error) {
@@ -103,6 +108,14 @@ func (d *oracleDescriber) Describe(r *oracleTasker, conn *oracleex.Connection, p
   llast_ddl_time date;
   ldatatype sys.dbms_describe.number_table;
   llen pls_integer;
+  overload sys.dbms_describe.number_table;
+  position sys.dbms_describe.number_table;
+  default_value sys.dbms_describe.number_table;
+  in_out sys.dbms_describe.number_table;
+  precision sys.dbms_describe.number_table;
+  scale sys.dbms_describe.number_table;
+  radix sys.dbms_describe.number_table;
+  spare sys.dbms_describe.number_table;
   ex1 exception;
   pragma exception_init(ex1, -06564);
 begin
@@ -132,18 +145,18 @@ begin
         :proc_name
         ,null
         ,null
-        ,:overload
-        ,:position
+        ,overload
+        ,position
         ,:level
         ,:argument_name
         ,ldatatype
-        ,:default_value
-        ,:in_out
+        ,default_value
+        ,in_out
         ,:length
-        ,:precision
-        ,:scale
-        ,:radix
-        ,:spare
+        ,precision
+        ,scale
+        ,radix
+        ,spare
       );
 	:datatype := ldatatype;
 	llen := ldatatype.count();
@@ -170,63 +183,20 @@ end;`
 	defer func() { cur.Close(); d.Unlock() }()
 
 	var (
-		err error
-
-		overload       = make([]interface{}, 4000)
-		position       = make([]interface{}, 4000)
-		level          = make([]interface{}, 4000)
-		argumentName   = make([]interface{}, 4000)
-		datatype       = make([]interface{}, 4000)
-		defaultValue   = make([]interface{}, 4000)
-		inOut          = make([]interface{}, 4000)
-		length         = make([]interface{}, 4000)
-		precision      = make([]interface{}, 4000)
-		scale          = make([]interface{}, 4000)
-		radix          = make([]interface{}, 4000)
-		spare          = make([]interface{}, 4000)
-		packageName    string
-		lastChangeTime time.Time
-		updated        int32
-		arrayLen       int32
-
+		err               error
+		lastChangeTime    time.Time
+		updated           int32
+		arrayLen          int32
 		procNameVar       *oracle.Variable
-		overloadVar       *oracle.Variable
-		positionVar       *oracle.Variable
 		levelVar          *oracle.Variable
 		argumentNameVar   *oracle.Variable
 		datatypeVar       *oracle.Variable
-		defaultValueVar   *oracle.Variable
-		inOutVar          *oracle.Variable
 		lengthVar         *oracle.Variable
-		precisionVar      *oracle.Variable
-		scaleVar          *oracle.Variable
-		radixVar          *oracle.Variable
-		spareVar          *oracle.Variable
 		packageNameVar    *oracle.Variable
 		lastChangeTimeVar *oracle.Variable
 		updatedVar        *oracle.Variable
 		arrayLenVar       *oracle.Variable
 	)
-
-	//	defer func() {
-	//		procNameVar.Free()
-	//		overloadVar.Free()
-	//		positionVar.Free()
-	//		levelVar.Free()
-	//		argumentNameVar.Free()
-	//		datatypeVar.Free()
-	//		defaultValueVar.Free()
-	//		inOutVar.Free()
-	//		lengthVar.Free()
-	//		precisionVar.Free()
-	//		scaleVar.Free()
-	//		radixVar.Free()
-	//		spareVar.Free()
-	//		packageNameVar.Free()
-	//		lastChangeTimeVar.Free()
-	//		updatedVar.Free()
-	//		arrayLenVar.Free()
-	//	}()
 
 	dpp, ok := d.procs[procName]
 	if !ok {
@@ -240,68 +210,28 @@ end;`
 	}
 	defer procNameVar.Free()
 
-	if overloadVar, err = cur.NewArrayVar(oracle.Int32VarType, overload, 0); err != nil {
-		return nil, errgo.Newf("error creating variable for %s(%T): %s", overload, overload, err)
-	}
-	defer overloadVar.Free()
-
-	if positionVar, err = cur.NewArrayVar(oracle.Int32VarType, position, 0); err != nil {
-		return nil, errgo.Newf("error creating variable for %s(%T): %s", position, position, err)
-	}
-	defer positionVar.Free()
-
-	if levelVar, err = cur.NewArrayVar(oracle.Int32VarType, level, 0); err != nil {
-		return nil, errgo.Newf("error creating variable for %s(%T): %s", level, level, err)
+	if levelVar, err = cur.NewVariable(4000, oracle.Int32VarType, 0); err != nil {
+		return nil, errgo.Newf("error creating variable for %s(%T): %s", "level", "number", err)
 	}
 	defer levelVar.Free()
 
-	if argumentNameVar, err = cur.NewArrayVar(oracle.StringVarType, argumentName, 30); err != nil {
-		return nil, errgo.Newf("error creating variable for %s(%T): %s", argumentName, argumentName, err)
+	if argumentNameVar, err = cur.NewVariable(4000, oracle.StringVarType, 30); err != nil {
+		return nil, errgo.Newf("error creating variable for %s(%T): %s", "argumentName", "string", err)
 	}
 	defer argumentNameVar.Free()
 
-	if datatypeVar, err = cur.NewArrayVar(oracle.Int32VarType, datatype, 0); err != nil {
-		return nil, errgo.Newf("error creating variable for %s(%T): %s", datatype, datatype, err)
+	if datatypeVar, err = cur.NewVariable(4000, oracle.Int32VarType, 0); err != nil {
+		return nil, errgo.Newf("error creating variable for %s(%T): %s", "datatype", "number", err)
 	}
 	defer datatypeVar.Free()
 
-	if defaultValueVar, err = cur.NewArrayVar(oracle.Int32VarType, defaultValue, 0); err != nil {
-		return nil, errgo.Newf("error creating variable for %s(%T): %s", defaultValue, defaultValue, err)
-	}
-	defer defaultValueVar.Free()
-
-	if inOutVar, err = cur.NewArrayVar(oracle.Int32VarType, inOut, 0); err != nil {
-		return nil, errgo.Newf("error creating variable for %s(%T): %s", inOut, inOut, err)
-	}
-	defer inOutVar.Free()
-
-	if lengthVar, err = cur.NewArrayVar(oracle.Int32VarType, length, 0); err != nil {
-		return nil, errgo.Newf("error creating variable for %s(%T): %s", length, length, err)
+	if lengthVar, err = cur.NewVariable(4000, oracle.Int32VarType, 0); err != nil {
+		return nil, errgo.Newf("error creating variable for %s(%T): %s", "length", "number", err)
 	}
 	defer lengthVar.Free()
 
-	if precisionVar, err = cur.NewArrayVar(oracle.Int32VarType, precision, 0); err != nil {
-		return nil, errgo.Newf("error creating variable for %s(%T): %s", precision, precision, err)
-	}
-	defer precisionVar.Free()
-
-	if scaleVar, err = cur.NewArrayVar(oracle.Int32VarType, scale, 0); err != nil {
-		return nil, errgo.Newf("error creating variable for %s(%T): %s", scale, scale, err)
-	}
-	defer scaleVar.Free()
-
-	if radixVar, err = cur.NewArrayVar(oracle.Int32VarType, radix, 0); err != nil {
-		return nil, errgo.Newf("error creating variable for %s(%T): %s", radix, radix, err)
-	}
-	defer radixVar.Free()
-
-	if spareVar, err = cur.NewArrayVar(oracle.Int32VarType, spare, 0); err != nil {
-		return nil, errgo.Newf("error creating variable for %s(%T): %s", spare, spare, err)
-	}
-	defer spareVar.Free()
-
-	if packageNameVar, err = cur.NewVar(&packageName); err != nil {
-		return nil, errgo.Newf("error creating variable for %s(%T): %s", packageName, packageName, err)
+	if packageNameVar, err = cur.NewVariable(0, oracle.StringVarType, 240); err != nil {
+		return nil, errgo.Newf("error creating variable for %s(%T): %s", "packageName", "string", err)
 	}
 	defer packageNameVar.Free()
 
@@ -321,18 +251,11 @@ end;`
 	defer arrayLenVar.Free()
 
 	if err := cur.Execute(stm, nil, map[string]interface{}{"proc_name": procNameVar,
-		"overload":      overloadVar,
-		"position":      positionVar,
+
 		"level":         levelVar,
 		"argument_name": argumentNameVar,
 		"datatype":      datatypeVar,
-		"default_value": defaultValueVar,
-		"in_out":        inOutVar,
 		"length":        lengthVar,
-		"precision":     precisionVar,
-		"scale":         scaleVar,
-		"radix":         radixVar,
-		"spare":         spareVar,
 		"package_name":  packageNameVar,
 		"last_ddl_time": lastChangeTimeVar,
 		"updated":       updatedVar,
@@ -343,12 +266,20 @@ end;`
 
 	if updated == 1 {
 		if !ok {
-			dpp = oracleDescribedProc{}
+			dpp = &oracleDescribedProc{}
 			d.procs[procName] = dpp
 		}
-		dpp.packageName = packageName
+		if packageName, err := packageNameVar.GetValue(0); err != nil {
+			return nil, err
+		} else {
+			if packageName != nil {
+				dpp.packageName = packageName.(string)
+			} else {
+				dpp.packageName = ""
+			}
+		}
 		dpp.timestamp = lastChangeTime
-		dpp.params = make(map[string]oracleDescribedProcParam)
+		dpp.params = make(map[string]*oracleDescribedProcParam)
 		for i := 0; i < int(arrayLen); i++ {
 			var (
 				paramName        string
@@ -387,8 +318,13 @@ end;`
 			case otNestedTableTypeOracle8, otVariableArrayOracle8, otRecordType:
 				{
 					// Пропускаем информацию о вложенных данных
-					for j := i + 1; j < len(datatype); j++ {
-						if level[i] == level[j] {
+					for j := i + 1; j < int(arrayLen); j++ {
+						intf, err = levelVar.GetValue(uint(j))
+						if err != nil {
+							return nil, err
+						}
+						subParamLevel := intf.(int32)
+						if paramLevel == subParamLevel {
 							i = j - 1
 							break
 						}
@@ -402,32 +338,54 @@ end;`
 					}
 					paramSubDataType = intf.(int32)
 
-					dpp.params[paramName] = oracleDescribedProcParam{dataType: paramDataType,
-						dataSubType: paramSubDataType,
-						level:       paramLevel,
-						length:      paramLength}
+					p := dppFree.Get()
+					paramInstance := p.(*oracleDescribedProcParam)
+					paramInstance.dataType = paramDataType
+					paramInstance.dataSubType = paramSubDataType
+					paramInstance.level = paramLevel
+					paramInstance.length = paramLength
+
+					dpp.params[paramName] = paramInstance
+
+					//					dpp.params[paramName] = oracleDescribedProcParam{dataType: paramDataType,
+					//						dataSubType: paramSubDataType,
+					//						level:       paramLevel,
+					//						length:      paramLength}
 					i = i + 1
 				}
 			default:
 				{
-					dpp.params[paramName] = oracleDescribedProcParam{dataType: paramDataType,
-						dataSubType: paramSubDataType,
-						level:       paramLevel,
-						length:      paramLength}
+					p := dppFree.Get()
+					paramInstance := p.(*oracleDescribedProcParam)
+					paramInstance.dataType = paramDataType
+					paramInstance.dataSubType = paramSubDataType
+					paramInstance.level = paramLevel
+					paramInstance.length = paramLength
+
+					dpp.params[paramName] = paramInstance
+					//					dpp.params[paramName] = oracleDescribedProcParam{dataType: paramDataType,
+					//						dataSubType: paramSubDataType,
+					//						level:       paramLevel,
+					//						length:      paramLength}
 				}
 			}
 
 		}
-		return &dpp, nil
+		return dpp, nil
 
 	}
-	return &dpp, nil
+	return dpp, nil
 }
 
 func (d *oracleDescriber) Clear() {
 	d.Lock()
 	defer d.Unlock()
 	for k := range d.procs {
+		for l := range d.procs[k].params {
+			p := d.procs[k].params[l]
+			dppFree.Put(p)
+			delete(d.procs[k].params, l)
+		}
 		delete(d.procs, k)
 	}
 }
@@ -473,5 +431,5 @@ func (dp *oracleDescribedProc) ParamLength(paramName string) int32 {
 
 // NewOracleDescriber - создание нового экземпляра объекта для работы с параметрами процедур в кеше
 func NewOracleDescriber() OracleDescriber {
-	return &oracleDescriber{procs: make(map[string]oracleDescribedProc)}
+	return &oracleDescriber{procs: make(map[string]*oracleDescribedProc)}
 }
