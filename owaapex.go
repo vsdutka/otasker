@@ -1,7 +1,7 @@
 // owaapex
 package otasker
 
-func NewOwaApexProcRunner() func(operationLoggerName, streamID string) OracleTasker {
+func NewOwaApexProcRunner() func() OracleTasker {
 	const (
 		stmEvalSessionID = `
 declare
@@ -28,7 +28,7 @@ Declare
   l_ext_param_name owa.vc_arr;
   l_ext_param_val owa.vc_arr;
   l_package_name varchar(240);
-  %s
+%s
 Begin
   /* >> Инициализация параметров */
 %s
@@ -182,7 +182,7 @@ exception
 end;`
 	)
 
-	return func(operationLoggerName, streamID string) OracleTasker {
-		return newOracleProcTasker(operationLoggerName, stmEvalSessionID, stmMain, stmGetRestChunk, stmKillSession, stmFileUpload, streamID)
+	return func() OracleTasker {
+		return newOracleProcTasker(stmEvalSessionID, stmMain, stmGetRestChunk, stmKillSession, stmFileUpload)
 	}
 }

@@ -1,7 +1,7 @@
 // owaekb
 package otasker
 
-func NewOwaEkbProcRunner() func(operationLoggerName, streamID string) OracleTasker {
+func NewOwaEkbProcRunner() func() OracleTasker {
 	const (
 		stmEvalSessionID = `
 declare
@@ -28,7 +28,7 @@ Declare
   l_ext_param_name wscontext.et_vc_arr;
   l_ext_param_val wscontext.et_vc_arr;
   l_package_name varchar(240);
-  %s
+%s
 Begin
   /* >> Инициализация параметров */
 %s
@@ -134,7 +134,7 @@ exception
 end;`
 	)
 
-	return func(operationLoggerName, streamID string) OracleTasker {
-		return newOracleProcTasker(operationLoggerName, stmEvalSessionID, stmMain, stmGetRestChunk, stmKillSession, stmFileUpload, streamID)
+	return func() OracleTasker {
+		return newOracleProcTasker(stmEvalSessionID, stmMain, stmGetRestChunk, stmKillSession, stmFileUpload)
 	}
 }
