@@ -55,12 +55,12 @@ type OracleTasker interface {
 }
 
 type oracleTaskerStep struct {
-	stepID             int
-	stepName           string
-	stepBg             time.Time
-	stepFn             time.Time
-	stepStm            string
-	stepStmParams      map[string]interface{}
+	stepID   int
+	stepName string
+	stepBg   time.Time
+	stepFn   time.Time
+	stepStm  string
+	//stepStmParams      map[string]interface{}
 	stepStmForShowning string
 	stepSuccess        bool
 }
@@ -131,13 +131,13 @@ func (r *oracleTasker) initLog() {
 			s.stepName = ""
 			s.stepStm = ""
 			s.stepStmForShowning = ""
-			for i := range s.stepStmParams {
-				oraVar, ok := s.stepStmParams[i].(*oracle.Variable)
-				if ok {
-					oraVar.Free()
-				}
-				delete(s.stepStmParams, i)
-			}
+			//			for i := range s.stepStmParams {
+			//				//				oraVar, ok := s.stepStmParams[i].(*oracle.Variable)
+			//				//				if ok {
+			//				//					oraVar.Free()
+			//				//				}
+			//				delete(s.stepStmParams, i)
+			//			}
 			stepsFree.Put(s)
 			delete(r.logSteps, k)
 		}
@@ -926,7 +926,6 @@ func (r *oracleTasker) openStep(stepNum int, stepType string) {
 	step.stepBg = time.Now()
 	step.stepFn = time.Time{}
 	step.stepStm = ""
-	step.stepStmParams = nil
 	step.stepSuccess = false
 	r.logSteps[stepNum] = step
 }
@@ -943,8 +942,7 @@ func (r *oracleTasker) setStepInfo(stepNum int, stepStm, stepStmForShowning stri
 	defer r.Unlock()
 	step := r.logSteps[stepNum]
 	step.stepStm = stepStm
-	step.stepStmForShowning = stepStmForShowning
-	step.stepStmParams = stepParams
+	step.makeStmForShowing(stepStmForShowning, stepParams)
 	step.stepSuccess = stepSuccess
 	r.logSteps[stepNum] = step
 }
@@ -1049,12 +1047,11 @@ func (r *oracleTasker) lastStm() string {
 	}
 
 	sort.Sort(sort.Reverse(sort.IntSlice(keys)))
-	step := r.logSteps[keys[0]]
-	stm, err := step.Stm()
-	if err != nil {
-		panic(err)
+	step, ok := r.logSteps[keys[0]]
+	if !ok {
+		return ""
 	}
-	return stm
+	return step.stepStmForShowning
 }
 
 func packError(err error) (int, []byte) {
@@ -1120,7 +1117,7 @@ func (r *oracleTasker) Info() OracleTaskInfo {
 	sort.Ints(keys)
 
 	i := 1
-	stm := ""
+
 	for _, v := range keys {
 		val := r.logSteps[v]
 		stepTime := int32(0)
@@ -1131,14 +1128,7 @@ func (r *oracleTasker) Info() OracleTaskInfo {
 		}
 
 		processTime = processTime + stepTime
-
-		var err error
-		stm, err = val.Stm()
-		if err != nil {
-			panic(err)
-		}
-
-		sSteps[i] = sesStep{Name: val.stepName, Duration: stepTime, Statement: stm}
+		sSteps[i] = sesStep{Name: val.stepName, Duration: stepTime, Statement: val.stepStmForShowning}
 
 		i = i + 1
 	}
@@ -1327,19 +1317,22 @@ func ExtractFileName(contentDisposition string) string {
 	return r
 }
 
-func (step *oracleTaskerStep) Stm() (string, error) {
+func (step *oracleTaskerStep) makeStmForShowing(stepStmForShowning string, stepParams map[string]interface{}) {
 	switch step.stepID {
-	case stepConnectNum:
-		return step.stepStmForShowning, nil
-	case stepDescribeNum:
-		return step.stepStmForShowning, nil
-	case stepSaveFileToDBNum, stepChunkGetNum:
-		return step.stepStmForShowning, nil
+	case stepConnectNum,
+		stepDescribeNum,
+		stepSaveFileToDBNum,
+		stepChunkGetNum,
+		stepDisconnectNum:
+		{
+			step.stepStmForShowning = stepStmForShowning
+		}
 	case stepRunNum:
-		sStm := step.stepStmForShowning
+		step.stepStmForShowning = stepStmForShowning
+		sStm := stepStmForShowning
 		sDeclareParams := ""
 		sSetParams := ""
-		for k, _ := range step.stepStmParams {
+		for k, _ := range stepParams {
 			if _, ok := map[string]bool{"ContentType": true,
 				"ContentLength":    true,
 				"CustomHeaders":    true,
@@ -1355,9 +1348,9 @@ func (step *oracleTaskerStep) Stm() (string, error) {
 
 				sStm = strings.Replace(sStm, ":"+k, "l_"+k, -1)
 
-				oraVar, ok := step.stepStmParams[k].(*oracle.Variable)
+				oraVar, ok := stepParams[k].(*oracle.Variable)
 				if !ok {
-					return "", errgo.Newf("Невозможно получить ссылку на параметр \"%s\"", k)
+					continue
 				}
 
 				if !oraVar.IsArray() {
@@ -1383,14 +1376,12 @@ func (step *oracleTaskerStep) Stm() (string, error) {
 				}
 			}
 		}
-		if sSetParams == "" {
-			return step.stepStm, nil
+		if sSetParams != "" {
+			step.stepStmForShowning = fmt.Sprintf(sStm, sDeclareParams, sSetParams)
 		}
-		return fmt.Sprintf(sStm, sDeclareParams, sSetParams), nil
-	case stepDisconnectNum:
-		return step.stepStmForShowning, nil
+
 	}
-	return "", nil
+
 }
 
 func variableToDeclareStm(v *oracle.Variable, varName string) string {
