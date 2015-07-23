@@ -33,7 +33,7 @@ Begin
   /* >> Инициализация параметров */
 %s
   /* << Инициализация параметров */
-  %s;
+  %s
   owa.init_cgi_env(l_num_params, l_param_name, l_param_val);
 %s
   %s(%s);
@@ -49,11 +49,11 @@ Begin
     begin
       wpg_docload.get_download_file(l_doc_info);
       if l_doc_info='B' then
-        hrslt.GET_INFO(:ContentType ,:ContentLength,:CustomHeaders);
+        apex_public_user.hrslt.GET_INFO(:ContentType ,:ContentLength,:CustomHeaders);
         wpg_docload.get_download_blob(l_lob);
         :lob__ := l_lob;
       elsif l_doc_info='F' then
-        hrslt.GET_INFO(:ContentType ,:ContentLength,:CustomHeaders);
+        apex_public_user.hrslt.GET_INFO(:ContentType ,:ContentLength,:CustomHeaders);
         wpg_docload.get_download_bfile(l_bfile);
         DBMS_LOB.LOADFROMFILE(l_lob, l_bfile, DBMS_LOB.getLength(l_bfile));
         :lob__ := l_lob;
@@ -102,8 +102,8 @@ Begin
   else
     rc__ := 0;
     commit;
-    hrslt.GET_INFO(:ContentType ,:ContentLength,:CustomHeaders);
-    :content__ := hrslt.GET32000(:bNextChunkExists);
+    apex_public_user.hrslt.GET_INFO(:ContentType ,:ContentLength,:CustomHeaders);
+    :content__ := apex_public_user.hrslt.GET32000(:bNextChunkExists);
     if :bNextChunkExists = 0 then
       dbms_session.modify_package_state(dbms_session.reinitialize);
     end if;
@@ -122,7 +122,7 @@ exception
 end;`
 
 		stmGetRestChunk = `begin
-  :Data:=hrslt.GET32000(:bNextChunkExists);
+  :Data:=apex_public_user.hrslt.GET32000(:bNextChunkExists);
   if :bNextChunkExists = 0 then
     dbms_session.modify_package_state(dbms_session.reinitialize);
   end if;
