@@ -131,13 +131,6 @@ func (r *oracleTasker) initLog() {
 			s.stepName = ""
 			s.stepStm = ""
 			s.stepStmForShowning = ""
-			//			for i := range s.stepStmParams {
-			//				//				oraVar, ok := s.stepStmParams[i].(*oracle.Variable)
-			//				//				if ok {
-			//				//					oraVar.Free()
-			//				//				}
-			//				delete(s.stepStmParams, i)
-			//			}
 			stepsFree.Put(s)
 			delete(r.logSteps, k)
 		}
@@ -288,6 +281,9 @@ func (r *oracleTasker) disconnect() (err error) {
 			if r.conn != nil {
 				r.conn.Close()
 			}
+		} else {
+			// Очистка в случае неудачного Logon
+			r.conn.Free(true)
 		}
 	}
 	return nil
