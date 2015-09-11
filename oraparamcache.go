@@ -59,6 +59,7 @@ const (
 type OracleDescribedProc interface {
 	PackageName() string
 	ParamDataType(paramName string) int32
+	ParamDataTypeName(paramName string) string
 	ParamDataSubType(paramName string) int32
 	ParamLevel(paramName string) int32
 	ParamLength(paramName string) int32
@@ -71,10 +72,11 @@ type OracleDescriber interface {
 }
 
 type oracleDescribedProcParam struct {
-	dataType    int32
-	dataSubType int32
-	level       int32
-	length      int32
+	dataType     int32
+	dataSubType  int32
+	dataTypeName string
+	level        int32
+	length       int32
 }
 
 var dppFree = sync.Pool{
@@ -97,8 +99,7 @@ func (d *oracleDescriber) Describe(r *oracleTasker, conn *oracle.Connection, pro
 	defer d.Unlock()
 
 	var (
-		err error
-		//lastChangeTime time.Time
+		err      error
 		arrayLen int32
 	)
 
@@ -108,10 +109,8 @@ func (d *oracleDescriber) Describe(r *oracleTasker, conn *oracle.Connection, pro
 		dpp = &oracleDescribedProc{timestamp: time.Time{}, params: make(map[string]*oracleDescribedProcParam)}
 		d.procs[procName] = dpp
 
-		//lastChangeTime = time.Time{}
 		shouldDescribe = true
 	} else {
-		//lastChangeTime = dpp.timestamp
 		shouldDescribe = false
 	}
 
@@ -174,6 +173,7 @@ func (d *oracleDescriber) Describe(r *oracleTasker, conn *oracle.Connection, pro
 				levelVar          *oracle.Variable
 				argumentNameVar   *oracle.Variable
 				datatypeVar       *oracle.Variable
+				dataTypeNameVar   *oracle.Variable
 				lengthVar         *oracle.Variable
 				packageNameVar    *oracle.Variable
 				lastChangeTimeVar *oracle.Variable
@@ -199,6 +199,10 @@ func (d *oracleDescriber) Describe(r *oracleTasker, conn *oracle.Connection, pro
 				return errgo.Newf("error creating variable for %s(%T): %s", "datatype", "number", err)
 			}
 			defer datatypeVar.Free()
+			if dataTypeNameVar, err = curLong.NewVariable(uint(arrayLen)+2, oracle.StringVarType, 120); err != nil {
+				return errgo.Newf("error creating variable for %s(%T): %s", "datatype_name", "string", err)
+			}
+			defer dataTypeNameVar.Free()
 			if lengthVar, err = curLong.NewVariable(uint(arrayLen)+2, oracle.Int32VarType, 0); err != nil {
 				return errgo.Newf("error creating variable for %s(%T): %s", "length", "number", err)
 			}
@@ -214,10 +218,12 @@ func (d *oracleDescriber) Describe(r *oracleTasker, conn *oracle.Connection, pro
 			}
 			defer lastChangeTimeVar.Free()
 
-			if err := curLong.Execute(stm_long, nil, map[string]interface{}{"proc_name": procNameVar,
+			if err := curLong.Execute(stm_long, nil, map[string]interface{}{
+				"proc_name":     procNameVar,
 				"level":         levelVar,
 				"argument_name": argumentNameVar,
 				"datatype":      datatypeVar,
+				"datatype_name": dataTypeNameVar,
 				"length":        lengthVar,
 				"package_name":  packageNameVar,
 				"last_ddl_time": lastChangeTimeVar,
@@ -234,15 +240,15 @@ func (d *oracleDescriber) Describe(r *oracleTasker, conn *oracle.Connection, pro
 					dpp.packageName = ""
 				}
 			}
-			//dpp.timestamp = lastChangeTime
 
 			for i := 0; i < int(arrayLen); i++ {
 				var (
-					paramName        string
-					paramDataType    int32
-					paramSubDataType int32
-					paramLevel       int32
-					paramLength      int32
+					paramName         string
+					paramDataType     int32
+					paramSubDataType  int32
+					paramDataTypeName string
+					paramLevel        int32
+					paramLength       int32
 				)
 
 				intf, err := argumentNameVar.GetValue(uint(i))
@@ -269,6 +275,16 @@ func (d *oracleDescriber) Describe(r *oracleTasker, conn *oracle.Connection, pro
 				paramLength = intf.(int32)
 
 				paramSubDataType = int32(0)
+
+				intf, err = dataTypeNameVar.GetValue(uint(i))
+
+				if err != nil {
+					return err
+				}
+				paramDataTypeName = ""
+				if intf != nil {
+					paramDataTypeName = intf.(string)
+				}
 
 				switch paramDataType {
 				case otNestedTableTypeOracle8, otVariableArrayOracle8, otRecordType:
@@ -298,6 +314,7 @@ func (d *oracleDescriber) Describe(r *oracleTasker, conn *oracle.Connection, pro
 						paramInstance := p.(*oracleDescribedProcParam)
 						paramInstance.dataType = paramDataType
 						paramInstance.dataSubType = paramSubDataType
+						paramInstance.dataTypeName = paramDataTypeName
 						paramInstance.level = paramLevel
 						paramInstance.length = paramLength
 
@@ -315,6 +332,7 @@ func (d *oracleDescriber) Describe(r *oracleTasker, conn *oracle.Connection, pro
 						paramInstance := p.(*oracleDescribedProcParam)
 						paramInstance.dataType = paramDataType
 						paramInstance.dataSubType = paramSubDataType
+						paramInstance.dataTypeName = paramDataTypeName
 						paramInstance.level = paramLevel
 						paramInstance.length = paramLength
 
@@ -360,7 +378,14 @@ func (dp *oracleDescribedProc) ParamDataType(paramName string) int32 {
 		return -1
 	}
 	return dpp.dataType
+}
 
+func (dp *oracleDescribedProc) ParamDataTypeName(paramName string) string {
+	dpp, ok := dp.params[strings.ToUpper(paramName)]
+	if !ok {
+		return ""
+	}
+	return dpp.dataTypeName
 }
 
 func (dp *oracleDescribedProc) ParamDataSubType(paramName string) int32 {
@@ -369,16 +394,16 @@ func (dp *oracleDescribedProc) ParamDataSubType(paramName string) int32 {
 		return -1
 	}
 	return dpp.dataSubType
-
 }
+
 func (dp *oracleDescribedProc) ParamLevel(paramName string) int32 {
 	dpp, ok := dp.params[strings.ToUpper(paramName)]
 	if !ok {
 		return -1
 	}
 	return dpp.level
-
 }
+
 func (dp *oracleDescribedProc) ParamLength(paramName string) int32 {
 	dpp, ok := dp.params[strings.ToUpper(paramName)]
 	if !ok {
@@ -483,7 +508,7 @@ end;`
   lobject_number NUMBER;
   lobject_type VARCHAR2(40);
   llast_ddl_time date;
-  overload sys.dbms_describe.number_table;
+  l_overload sys.dbms_describe.number_table;
   position sys.dbms_describe.number_table;
   default_value sys.dbms_describe.number_table;
   in_out sys.dbms_describe.number_table;
@@ -491,6 +516,7 @@ end;`
   scale sys.dbms_describe.number_table;
   radix sys.dbms_describe.number_table;
   spare sys.dbms_describe.number_table;
+  argument_name sys.dbms_describe.varchar2_table;
   ex1 exception;
   pragma exception_init(ex1, -06564);
 begin
@@ -516,10 +542,10 @@ begin
       :proc_name
       ,null
       ,null
-      ,overload
+      ,l_overload
       ,position
       ,:level
-      ,:argument_name
+      ,argument_name
       ,:datatype
       ,default_value
       ,in_out
@@ -529,6 +555,29 @@ begin
       ,radix
       ,spare
     );
+    
+    for i in argument_name.first()..argument_name.last()
+    loop
+	  :argument_name(i) := argument_name(i);
+      for rec in
+        (
+          select   
+            case 
+                when type_name is not null then type_owner||'.'||type_name||decode(type_subname, null, '', '.'||type_subname) 
+                when pls_type in ('VARCHAR2', 'STRING', 'CHAR') then pls_type||'('||nvl(char_length, 32767)||')'
+                when pls_type in ('NUMBER', 'DECIMAL') then pls_type||'('||DATA_PRECISION||decode(DATA_SCALE, null, '', ',' ||DATA_SCALE)||')'
+                else pls_type
+              end type_name
+            from all_arguments
+           where object_id   = lobject_number
+             and (argument_name = argument_name(i) or (argument_name is null and argument_name(i) is null))
+             and (l_overload(i) = 0 or overload = l_overload(i))
+             and data_level = 0
+          )
+      loop
+        :datatype_name(i) := rec.type_name;
+      end loop;
+    end loop;
   commit;
 exception
   when others then
