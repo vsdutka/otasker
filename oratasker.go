@@ -78,7 +78,7 @@ const (
 
 type oracleTasker struct {
 	sync.Mutex                     //включается только при изменении данных, используемых в Break() и Info()
-	cafMutex            sync.Mutex // требуется для синхронизации разрушения объекта C(lose )A(nd )F(ree )Mutes
+	cafMutex            sync.Mutex // требуется для синхронизации разрушения объекта C(lose )A(nd )F(ree )Mutex
 	opLoggerName        string
 	streamID            string
 	conn                *oracle.Connection
@@ -88,6 +88,7 @@ type oracleTasker struct {
 	connStr             string
 	sessID              string
 	logRequestProceeded int
+	logErrorsNum        int
 	logSessionID        string
 	logTaskID           string
 	logUserName         string
@@ -207,6 +208,11 @@ func (r *oracleTasker) Run(sessionID, taskID, userName, userPass, connStr,
 		r.disconnect()
 
 		res.Duration = int64(time.Since(bg) / time.Second)
+		func() {
+			r.Lock()
+			defer r.Unlock()
+			r.logErrorsNum++
+		}()
 		return res
 	}
 
@@ -220,6 +226,11 @@ func (r *oracleTasker) Run(sessionID, taskID, userName, userPass, connStr,
 			r.disconnect()
 		}
 		res.Duration = int64(time.Since(bg) / time.Second)
+		func() {
+			r.Lock()
+			defer r.Unlock()
+			r.logErrorsNum++
+		}()
 		return res
 	}
 	res.StatusCode = http.StatusOK
@@ -1139,6 +1150,7 @@ type OracleTaskInfo struct {
 	SessionID        string
 	Created          string
 	RequestProceeded int
+	ErrorsNumber     int
 	IdleTime         int32
 	LastDuration     int32
 	LastSteps        map[int]sesStep
@@ -1210,6 +1222,7 @@ func (r *oracleTasker) Info(sortKeyName string) OracleTaskInfo {
 		r.sessID,
 		r.stateCreateDT.Format(time.RFC3339),
 		r.logRequestProceeded,
+		r.logErrorsNum,
 		idleTime,
 		processTime,
 		sSteps,
@@ -1522,16 +1535,6 @@ func prepareParam(
 	return nil
 }
 
-//func concat(str1, str2, delim string) string {
-//	if str1 == "" {
-//		return str2
-//	}
-//	if str2 == "" {
-//		return str1
-//	}
-//	return str1 + delim + str2
-//}
-
 func UnMask(err error) *oracle.Error {
 	oraErr, ok := err.(*oracle.Error)
 	if ok {
@@ -1553,148 +1556,3 @@ func ExtractFileName(contentDisposition string) string {
 	}
 	return r
 }
-
-//func (step *oracleTaskerStep) makeStmForShowing(stepStmForShowning string, stepParams map[string]interface{}) {
-//	switch step.stepID {
-//	case stepConnectNum,
-//		stepDescribeNum,
-//		stepSaveFileToDBNum,
-//		stepChunkGetNum,
-//		stepDisconnectNum:
-//		{
-//			step.stepStmForShowning = stepStmForShowning
-//		}
-//	case stepRunNum:
-//		step.stepStmForShowning = stepStmForShowning
-//		sStm := stepStmForShowning
-//		sDeclareParams := ""
-//		sSetParams := ""
-//		for k, _ := range stepParams {
-//			if _, ok := map[string]bool{"ContentType": true,
-//				"ContentLength":    true,
-//				"CustomHeaders":    true,
-//				"rc__":             true,
-//				"content__":        true,
-//				"lob__":            true,
-//				"bNextChunkExists": true,
-//				"sqlerrcode":       true,
-//				"sqlerrm":          true,
-//				"sqlerrtrace":      true,
-//				"sid":              true,
-//			}[k]; !ok {
-
-//				sStm = strings.Replace(sStm, ":"+k, "l_"+k, -1)
-
-//				oraVar, ok := stepParams[k].(*oracle.Variable)
-//				if !ok {
-//					continue
-//				}
-
-//				if !oraVar.IsArray() {
-//					if _, ok_1 := map[string]bool{"num_params": true,
-//						"num_ext_params": true,
-//						"package_name":   true,
-//					}[k]; !ok_1 {
-//						sDeclareParams = sDeclareParams + variableToDeclareStm(oraVar, k)
-//					}
-//					sSetParams = sSetParams + fmt.Sprintf("  l_%s := %s;\n", k, variableToSetStm(oraVar, 0, k))
-//				} else {
-//					if _, ok_1 := map[string]bool{"param_name": true,
-//						"param_val":      true,
-//						"ext_param_name": true,
-//						"ext_param_val":  true,
-//					}[k]; !ok_1 {
-//						sDeclareParams = sDeclareParams + fmt.Sprintf("  l_%s Впишите название типа тут!!!\n", k)
-//					}
-
-//					for i := 0; i < int(oraVar.ArrayLength()); i++ {
-//						sSetParams = sSetParams + fmt.Sprintf("  l_%s(%d) := %s;\n", k, i+1, variableToSetStm(oraVar, uint(i), k))
-//					}
-//				}
-//			}
-//		}
-//		if sSetParams != "" {
-//			step.stepStmForShowning = fmt.Sprintf(sStm, sDeclareParams, sSetParams)
-//		}
-
-//	}
-
-//}
-
-//func variableToDeclareStm(v *oracle.Variable, varName string) string {
-//	oraVarType, _, _, _ := oracle.VarTypeByValue(v)
-
-//	switch oraVarType {
-//	case oracle.StringVarType:
-//		return fmt.Sprintf("  l_%s varchar2(%d);\n", varName, v.Size())
-//		//	case oracle.FixedCharVarType:
-//		//	case oracle.RowidVarType:
-//		//	case oracle.BinaryVarType:
-//		//	case oracle.LongStringVarType:
-//		//	case oracle.LongBinaryVarType:
-//		//	case oracle.CursorVarType:
-//		//	case oracle.FloatVarType:
-//		//	case oracle.NativeFloatVarType:
-//	case oracle.Int32VarType:
-//		return fmt.Sprintf("  l_%s number;\n", varName)
-//	case oracle.Int64VarType:
-//		return fmt.Sprintf("  l_%s number;\n", varName)
-//		//	case oracle.LongIntegerVarType:
-//		//	case oracle.NumberAsStringVarType:
-//		//	case oracle.BooleanVarType:
-//	case oracle.DateTimeVarType:
-//		return fmt.Sprintf("  l_%s date;\n", varName)
-//		//	case oracle.ClobVarType:
-//		//	case oracle.NClobVarType:
-//	//	case oracle.BlobVarType:
-//	//	case oracle.BFileVarType:
-//	default:
-//		panic(errgo.Newf("Недопустимый тип переменной \"%s\"", oraVarType.Name))
-//	}
-//	panic(errgo.New(oraVarType.String()))
-//}
-
-//func variableToSetStm(v *oracle.Variable, arrayPos uint, varName string) string {
-//	oraVarType, _, _, _ := oracle.VarTypeByValue(v)
-//	oraVarValue, err := v.GetValue(arrayPos)
-//	if err != nil {
-//		panic(err)
-//	}
-//	switch oraVarType {
-//	case oracle.StringVarType:
-//		val, ok := oraVarValue.(string)
-//		if !ok {
-//			return "'%s'"
-//		}
-//		return fmt.Sprintf("'%s'", strings.Replace(val, "'", "''", -1))
-//		//	case oracle.FixedCharVarType:
-//		//	case oracle.RowidVarType:
-//		//	case oracle.BinaryVarType:
-//		//	case oracle.LongStringVarType:
-//		//	case oracle.LongBinaryVarType:
-//		//	case oracle.CursorVarType:
-//		//	case oracle.FloatVarType:
-//		//	case oracle.NativeFloatVarType:
-//	case oracle.Int32VarType:
-//		val := oraVarValue.(int32)
-//		return fmt.Sprintf("%v", val)
-//	case oracle.Int64VarType:
-//		val := oraVarValue.(int64)
-//		return fmt.Sprintf("%v", val)
-//		//	case oracle.LongIntegerVarType:
-//		//	case oracle.NumberAsStringVarType:
-//		//	case oracle.BooleanVarType:
-//	case oracle.DateTimeVarType:
-//		val := oraVarValue.(time.Time)
-//		return fmt.Sprintf("to_date('%s', 'YYYY-MM-DD HH24:MI:SS')", val.Format("2006-01-02 15:04:05"))
-//		//	case oracle.ClobVarType:
-//		//	case oracle.NClobVarType:
-//	case oracle.BlobVarType:
-//		return ":" + varName
-//	//	case oracle.BFileVarType:
-//	default:
-//		panic(errgo.Newf("Недопустимый тип переменной \"%s\"", oraVarType.Name))
-//	}
-
-//	panic(errgo.New(oraVarType.String()))
-//}

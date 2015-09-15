@@ -319,11 +319,6 @@ func (d *oracleDescriber) Describe(r *oracleTasker, conn *oracle.Connection, pro
 						paramInstance.length = paramLength
 
 						dpp.params[paramName] = paramInstance
-
-						//					dpp.params[paramName] = oracleDescribedProcParam{dataType: paramDataType,
-						//						dataSubType: paramSubDataType,
-						//						level:       paramLevel,
-						//						length:      paramLength}
 						i = i + 1
 					}
 				default:
@@ -337,10 +332,6 @@ func (d *oracleDescriber) Describe(r *oracleTasker, conn *oracle.Connection, pro
 						paramInstance.length = paramLength
 
 						dpp.params[paramName] = paramInstance
-						//					dpp.params[paramName] = oracleDescribedProcParam{dataType: paramDataType,
-						//						dataSubType: paramSubDataType,
-						//						level:       paramLevel,
-						//						length:      paramLength}
 					}
 				}
 
