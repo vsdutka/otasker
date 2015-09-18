@@ -56,12 +56,11 @@ type OracleTasker interface {
 }
 
 type oracleTaskerStep struct {
-	stepID   int
-	stepName string
-	stepBg   time.Time
-	stepFn   time.Time
-	stepStm  string
-	//stepStmParams      map[string]interface{}
+	stepID             int
+	stepName           string
+	stepBg             time.Time
+	stepFn             time.Time
+	stepStm            string
 	stepStmForShowning string
 	stepSuccess        bool
 }
@@ -82,7 +81,6 @@ type oracleTasker struct {
 	opLoggerName        string
 	streamID            string
 	conn                *oracle.Connection
-	descr               OracleDescriber
 	connUserName        string
 	connUserPass        string
 	connStr             string
@@ -116,7 +114,6 @@ func newOracleProcTasker(stmEvalSessionID, stmMain, stmGetRestChunk, stmKillSess
 	r.stateIsWorking = false
 	r.stateCreateDT = time.Now()
 	r.stateLastFinishDT = time.Time{}
-	r.descr = NewOracleDescriber()
 	r.logSteps = make(map[int]*oracleTaskerStep)
 
 	r.stmEvalSessionID = stmEvalSessionID
@@ -151,8 +148,6 @@ func (r *oracleTasker) CloseAndFree() error {
 	r.cafMutex.Lock()
 	defer r.cafMutex.Unlock()
 
-	r.descr.Clear()
-	r.descr = nil
 	if r.conn != nil {
 		if err := r.conn.Close(); err != nil {
 			return err
@@ -308,29 +303,20 @@ func (r *oracleTasker) evalSessionID() error {
 	cur := r.conn.NewCursor()
 	defer func() { cur.Close(); r.closeStep(stepEvalSid) }()
 
-	var (
-		err    error
-		v      *oracle.Variable
-		sessID interface{}
-	)
 	r.sessID = ""
-	v, err = cur.NewVariable(0, oracle.StringVarType, 20)
-	if err != nil {
-		return errgo.Newf("error creating variable for %s(%T): %s", sessID, sessID, err)
-	}
-
 	stepStm := r.stmEvalSessionID
-	stepStmParams := map[string]interface{}{"sid": v}
 	r.setStepInfo(stepEvalSid, stepStm, stepStm, false)
 
-	err = cur.Execute(stepStm, nil, stepStmParams)
-
-	sessID, err = v.GetValue(0)
+	err := cur.Execute(stepStm, nil, nil)
 	if err != nil {
 		return err
 	}
-	r.sessID = sessID.(string)
-	r.setStepInfo(stepEvalSid, stepStm, stepStm, err == nil)
+	row, err1 := cur.FetchOne()
+	if err1 != nil {
+		return err1
+	}
+	r.sessID = row[0].(string)
+	r.setStepInfo(stepEvalSid, stepStm, stepStm, true)
 	return err
 }
 
@@ -348,10 +334,10 @@ func (r *oracleTasker) run(res *OracleTaskResult, paramStoreProc, beforeScript, 
   l_package_name := :package_name;
 `
 	)
-	dp, err := func() (OracleDescribedProc, error) {
+	err := func() error {
 		r.openStep(stepDescribeNum, "Describe")
 		defer r.closeStep(stepDescribeNum)
-		return r.descr.Describe(r, r.conn, procName)
+		return Describe(r.conn, r.connStr, procName)
 
 	}()
 	if err != nil {
@@ -494,9 +480,13 @@ func (r *oracleTasker) run(res *OracleTaskResult, paramStoreProc, beforeScript, 
 		extParamValueMaxLen int
 	)
 	for paramName, paramValue := range urlParams {
-		err := prepareParam(cur, sqlParams,
+		paramType, paramTypeName, err := ArgumentInfo(r.connStr, procName, paramName)
+		if err != nil {
+			return err
+		}
+		err = prepareParam(cur, sqlParams,
 			paramName, paramValue,
-			dp.ParamDataType(paramName), dp.ParamDataSubType(paramName), dp.ParamDataTypeName(paramName),
+			paramType, paramTypeName,
 			paramStoreProc,
 			&stmExecDeclarePart, &stmShowDeclarePart,
 			&stmExecSetPart, &stmShowSetPart,
@@ -528,9 +518,13 @@ func (r *oracleTasker) run(res *OracleTaskResult, paramStoreProc, beforeScript, 
 			if err != nil {
 				return err
 			}
+			paramType, paramTypeName, err1 := ArgumentInfo(r.connStr, procName, paramName)
+			if err1 != nil {
+				return err1
+			}
 			err = prepareParam(cur, sqlParams,
 				paramName, fileName,
-				dp.ParamDataType(paramName), dp.ParamDataSubType(paramName), dp.ParamDataTypeName(paramName),
+				paramType, paramTypeName,
 				paramStoreProc,
 				&stmExecDeclarePart, &stmShowDeclarePart,
 				&stmExecSetPart, &stmShowSetPart,
@@ -553,6 +547,7 @@ func (r *oracleTasker) run(res *OracleTaskResult, paramStoreProc, beforeScript, 
 	stmExecSetPart.WriteString(fmt.Sprintf("  l_num_ext_params := %d;\n", int32(len(extParamName))))
 	stmShowSetPart.WriteString(fmt.Sprintf("  l_num_ext_params := %d;\n", int32(len(extParamName))))
 	for key, val := range extParamName {
+		//FIXME Заменить текстовую константу на использование bind-переменной
 		stmExecSetPart.WriteString(fmt.Sprintf("  l_ext_param_name(%d) := '%s';\n", key+1, val))
 		stmShowSetPart.WriteString(fmt.Sprintf("  l_ext_param_name(%d) := '%s';\n", key+1, val))
 	}
@@ -576,7 +571,11 @@ func (r *oracleTasker) run(res *OracleTaskResult, paramStoreProc, beforeScript, 
 		return errgo.Newf("error creating variable for %s(%T): %s", "num_ext_params", "number", err)
 	}
 
-	pkgName := dp.PackageName()
+	var pkgName string
+	_, pkgName, err = ProcedureInfo(r.connStr, procName)
+	if err != nil {
+		return err
+	}
 
 	var pnVar *oracle.Variable
 	pnVar, err = cur.NewVariable(0, oracle.StringVarType, 80)
@@ -1252,7 +1251,7 @@ func (r *oracleTasker) Info(sortKeyName string) OracleTaskInfo {
 func prepareParam(
 	cur *oracle.Cursor, params map[string]interface{},
 	paramName string, paramValue []string,
-	paramDataType, paramSubDataType int32, paramDataTypeName string,
+	paramType int32, paramTypeName string,
 	paramStoreProc string,
 	stmExecDeclarePart, stmShowDeclarePart,
 	stmExecSetPart, stmShowSetPart,
@@ -1264,17 +1263,19 @@ func prepareParam(
 		lVar *oracle.Variable
 		err  error
 	)
-	switch paramDataType {
-	case otVarchar2, otString, otPLSQLString:
+
+	switch paramType {
+	case oString:
 		{
 			value := paramValue[0]
 			if lVar, err = cur.NewVar(&value); err != nil {
+				panic(fmt.Sprintf("1 - %v %v %v", paramName, paramType, paramTypeName))
 				return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
 			}
 			params[paramName] = lVar
 
 			// stmExecDeclarePart
-			stmShowDeclarePart.WriteString(fmt.Sprintf("  l_%s %s;\n", paramName, paramDataTypeName))
+			stmShowDeclarePart.WriteString(fmt.Sprintf("  l_%s %s;\n", paramName, paramTypeName))
 			//stmExecSetPart,
 			stmShowSetPart.WriteString(fmt.Sprintf("  l_%s := '%s';\n", paramName, strings.Replace(value, "'", "''", -1)))
 			// Вызов процедуры - Формирование строки с параметрами для вызова процедуры
@@ -1300,16 +1301,23 @@ func prepareParam(
 			}
 			return nil
 		}
-	case otNumber, otFloat, otInteger:
+	case oNumber:
 		{
 			value := paramValue[0]
-			if lVar, err = cur.NewVar(&value); err != nil {
+			//			if lVar, err = cur.NewVar(&value); err != nil {
+
+			//				return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
+			//			}
+			if lVar, err = cur.NewVariable(1, oracle.FloatVarType, 0); err != nil {
+
 				return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
 			}
+			lVar.SetValue(0, value)
+
 			params[paramName] = lVar
 
 			// stmExecDeclarePart
-			stmShowDeclarePart.WriteString(fmt.Sprintf("  l_%s %s;\n", paramName, paramDataTypeName))
+			stmShowDeclarePart.WriteString(fmt.Sprintf("  l_%s %s;\n", paramName, paramTypeName))
 			//stmExecSetPart,
 			stmShowSetPart.WriteString(fmt.Sprintf("  l_%s := %s;\n", paramName, value))
 			// Вызов процедуры - Формирование строки с параметрами для вызова процедуры
@@ -1335,7 +1343,44 @@ func prepareParam(
 			}
 			return nil
 		}
-	case otDate:
+	case oInteger:
+		{
+			value := paramValue[0]
+			if lVar, err = cur.NewVar(&value); err != nil {
+
+				return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
+			}
+			params[paramName] = lVar
+
+			// stmExecDeclarePart
+			stmShowDeclarePart.WriteString(fmt.Sprintf("  l_%s %s;\n", paramName, paramTypeName))
+			//stmExecSetPart,
+			stmShowSetPart.WriteString(fmt.Sprintf("  l_%s := %s;\n", paramName, value))
+			// Вызов процедуры - Формирование строки с параметрами для вызова процедуры
+			if stmExecProcParams.Len() != 0 {
+				stmExecProcParams.WriteString(", ")
+			}
+			stmExecProcParams.WriteString(fmt.Sprintf("%s => :%s", paramName, paramName))
+
+			// Отображение вызова процедуры - Формирование строки с параметрами для вызова процедуры
+			if stmShowProcParams.Len() != 0 {
+				stmShowProcParams.WriteString(", ")
+			}
+			stmShowProcParams.WriteString(fmt.Sprintf("%s => l_%s", paramName, paramName))
+
+			// Добавление вызова сохранения параметра
+			if paramStoreProc != "" {
+				if lVar, err = cur.NewVar(&value); err != nil {
+					return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
+				}
+				params[paramName+"_s"] = lVar
+				stmExecStoreInContext.WriteString(fmt.Sprintf("  %s('%s', :%s_s);\n", paramStoreProc, paramName, paramName))
+				stmShowStoreInContext.WriteString(fmt.Sprintf("  %s('%s', l_%s);\n", paramStoreProc, paramName, paramName))
+			}
+			return nil
+		}
+
+	case oDate:
 		{
 			value := paramValue[0]
 			if lVar, err = cur.NewVar(&value); err != nil {
@@ -1344,7 +1389,7 @@ func prepareParam(
 			params[paramName] = lVar
 
 			// stmExecDeclarePart
-			stmShowDeclarePart.WriteString(fmt.Sprintf("  l_%s %s;\n", paramName, paramDataTypeName))
+			stmShowDeclarePart.WriteString(fmt.Sprintf("  l_%s %s;\n", paramName, paramTypeName))
 			//stmExecSetPart,
 			stmShowSetPart.WriteString(fmt.Sprintf("  l_%s := to_date('%s');\n", paramName, value))
 			// Вызов процедуры - Формирование строки с параметрами для вызова процедуры
@@ -1369,7 +1414,7 @@ func prepareParam(
 			}
 			return nil
 		}
-	case otBoolean:
+	case oBoolean:
 		{
 			value := paramValue[0]
 			if lVar, err = cur.NewVar(&value); err != nil {
@@ -1378,7 +1423,7 @@ func prepareParam(
 			params[paramName] = lVar
 
 			// stmExecDeclarePart
-			stmShowDeclarePart.WriteString(fmt.Sprintf("  l_%s %s;\n", paramName, paramDataTypeName))
+			stmShowDeclarePart.WriteString(fmt.Sprintf("  l_%s %s;\n", paramName, paramTypeName))
 			//stmExecSetPart,
 			stmShowSetPart.WriteString(fmt.Sprintf("  l_%s := %s;\n", paramName, value))
 			// Вызов процедуры - Формирование строки с параметрами для вызова процедуры
@@ -1399,7 +1444,7 @@ func prepareParam(
 			}
 			return nil
 		}
-	case otPLSQLIndexByTableType:
+	case oStringTab, oNumberTab, oIntegerTab, oDateTab, oBooleanTab:
 		{
 			value := make([]interface{}, len(paramValue))
 			valueMaxLen := 0
@@ -1409,21 +1454,19 @@ func prepareParam(
 					valueMaxLen = len(val)
 				}
 			}
-
-			switch paramSubDataType {
-			case otVarchar2, otString, otPLSQLString:
+			switch paramType {
+			case oStringTab:
 				{
-
 					if lVar, err = cur.NewArrayVar(oracle.StringVarType, value, uint(valueMaxLen)); err != nil {
 						return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
 					}
 					params[paramName] = lVar
 
 					// stmExecDeclarePart
-					stmShowDeclarePart.WriteString(fmt.Sprintf("  l_%s %s;\n", paramName, paramDataTypeName))
+					stmShowDeclarePart.WriteString(fmt.Sprintf("  l_%s %s;\n", paramName, paramTypeName))
 					//stmExecSetPart,
 					for i := range paramValue {
-						stmShowSetPart.WriteString(fmt.Sprintf("  l_%s := '%s';\n", paramName, strings.Replace(paramValue[i], "'", "''", -1)))
+						stmShowSetPart.WriteString(fmt.Sprintf("  l_%s(%d) := '%s';\n", paramName, i+1, strings.Replace(paramValue[i], "'", "''", -1)))
 					}
 					// Вызов процедуры - Формирование строки с параметрами для вызова процедуры
 					if stmExecProcParams.Len() != 0 {
@@ -1450,17 +1493,17 @@ func prepareParam(
 					}
 
 				}
-			case otNumber, otFloat:
+			case oNumberTab:
 				{
 					if lVar, err = cur.NewArrayVar(oracle.FloatVarType, value, 0); err != nil {
 						return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
 					}
 					params[paramName] = lVar
 					// stmExecDeclarePart
-					stmShowDeclarePart.WriteString(fmt.Sprintf("  l_%s %s;\n", paramName, paramDataTypeName))
+					stmShowDeclarePart.WriteString(fmt.Sprintf("  l_%s %s;\n", paramName, paramTypeName))
 					//stmExecSetPart,
 					for i := range paramValue {
-						stmShowSetPart.WriteString(fmt.Sprintf("  l_%s := %s;\n", paramName, paramValue[i]))
+						stmShowSetPart.WriteString(fmt.Sprintf("  l_%s(%d) := %s;\n", paramName, i+1, paramValue[i]))
 					}
 					// Вызов процедуры - Формирование строки с параметрами для вызова процедуры
 					if stmExecProcParams.Len() != 0 {
@@ -1486,17 +1529,17 @@ func prepareParam(
 						}
 					}
 				}
-			case otInteger:
+			case oIntegerTab:
 				{
 					if lVar, err = cur.NewArrayVar(oracle.Int32VarType, value, 0); err != nil {
 						return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
 					}
 					params[paramName] = lVar
 					// stmExecDeclarePart
-					stmShowDeclarePart.WriteString(fmt.Sprintf("  l_%s %s;\n", paramName, paramDataTypeName))
+					stmShowDeclarePart.WriteString(fmt.Sprintf("  l_%s %s;\n", paramName, paramTypeName))
 					//stmExecSetPart,
 					for i := range paramValue {
-						stmShowSetPart.WriteString(fmt.Sprintf("  l_%s := %s;\n", paramName, paramValue[i]))
+						stmShowSetPart.WriteString(fmt.Sprintf("  l_%s(%d) := %s;\n", paramName, i+1, paramValue[i]))
 					}
 					// Вызов процедуры - Формирование строки с параметрами для вызова процедуры
 					if stmExecProcParams.Len() != 0 {
@@ -1520,9 +1563,49 @@ func prepareParam(
 						}
 					}
 				}
+			case oDateTab:
+				{
+					valueTime := make([]interface{}, len(paramValue))
+					for i, val := range paramValue {
+						valueTime[i], _ = time.Parse(time.RFC3339, val)
+
+					}
+					if lVar, err = cur.NewArrayVar(oracle.DateTimeVarType, valueTime, 0); err != nil {
+						return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
+					}
+
+					params[paramName] = lVar
+					// stmExecDeclarePart
+					stmShowDeclarePart.WriteString(fmt.Sprintf("  l_%s %s;\n", paramName, paramTypeName))
+					//stmExecSetPart,
+					for i := range paramValue {
+						stmShowSetPart.WriteString(fmt.Sprintf("  l_%s(%d) := to_date('%s');\n", paramName, i+1, paramValue[i]))
+					}
+					// Вызов процедуры - Формирование строки с параметрами для вызова процедуры
+					if stmExecProcParams.Len() != 0 {
+						stmExecProcParams.WriteString(", ")
+					}
+					stmExecProcParams.WriteString(fmt.Sprintf("%s => :%s", paramName, paramName))
+					// Отображение вызова процедуры - Формирование строки с параметрами для вызова процедуры
+					if stmShowProcParams.Len() != 0 {
+						stmShowProcParams.WriteString(", ")
+					}
+					stmShowProcParams.WriteString(fmt.Sprintf("%s => l_%s", paramName, paramName))
+					// Добавление вызова сохранения параметра
+					if paramStoreProc != "" {
+						if lVar, err = cur.NewArrayVar(oracle.DateTimeVarType, (value), 0); err != nil {
+							return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
+						}
+						params[paramName+"_s"] = lVar
+						for i := range paramValue {
+							stmExecStoreInContext.WriteString(fmt.Sprintf("  %s('%s', :%s_s(%d));\n", paramStoreProc, paramName, paramName, i+1))
+							stmShowStoreInContext.WriteString(fmt.Sprintf("  %s('%s', l_%s(%d));\n", paramStoreProc, paramName, paramName, i+1))
+						}
+					}
+				}
 			default:
 				{
-					return errgo.Newf("error creating variable for %s(%T): Invalid subtype %d", paramName, value, paramSubDataType)
+					return errgo.Newf("error creating variable for %s(%T): Invalid subtype %v", paramName, value, paramType)
 				}
 			}
 			return nil

@@ -3,22 +3,8 @@ package otasker
 
 func NewOwaClassicProcRunner() func() OracleTasker {
 	const (
-		stmEvalSessionID = `
-declare
-  l_sid varchar2(40);
-begin
-  begin
-    l_sid:=kill_session.get_current_session_id;
-  exception
-    when no_data_found then
-      l_sid := null;
-    when too_many_rows then
-      l_sid := null;
-  end;
-  :sid := l_sid;
-end;
-`
-		stmMain = `
+		stmEvalSessionID = `select kill_session.get_current_session_id from dual`
+		stmMain          = `
 Declare
   rc__ number(2,0);
   l_num_params number;
