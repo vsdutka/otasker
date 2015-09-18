@@ -41,3 +41,15 @@ $RECYCLE.BIN/
 Network Trash Folder
 Temporary Items
 .apdisk
+*.log
+callgraph.pdf
+otasker_test.go
+*.exe
+prof.out
+*.out
+sql_tests/1.sql
+*.~sql
+sql_tests/gen_test_data.~tst
+*.prc
+sql_tests/gen_test_data.tst
+*.~prc
