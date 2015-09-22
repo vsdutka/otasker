@@ -135,9 +135,18 @@ func Describe(conn *oracle.Connection, dbName, procedureName string) error {
 
 	if shouldDescribe {
 		err = func() error {
+			curLong := conn.NewCursor()
+			defer curLong.Close()
+			if err := curLong.Execute(stm_descr_long, []interface{}{objectId, parsedProcName}, nil); err != nil {
+				return errgo.Newf("Невозможно получить описание для \"%s\"\nОшибка: %s", procedureName, err.Error())
+			}
+			rows, err := curLong.FetchAll()
+			if err != nil {
+				return errgo.Newf("Невозможно получить описание для \"%s\"\nОшибка: %s", procedureName, err.Error())
+			}
 
-			plock.RLock()
-			defer plock.RUnlock()
+			plock.Lock()
+			defer plock.Unlock()
 
 			p, ok := plist[strings.ToUpper(dbName+"."+procedureName)]
 			if !ok {
@@ -151,16 +160,6 @@ func Describe(conn *oracle.Connection, dbName, procedureName string) error {
 			}
 			p.timestamp = timestamp
 			p.packageName = packageName
-
-			curLong := conn.NewCursor()
-			defer curLong.Close()
-			if err := curLong.Execute(stm_descr_long, []interface{}{objectId, parsedProcName}, nil); err != nil {
-				return errgo.Newf("Невозможно получить описание для \"%s\"\nОшибка: %s", procedureName, err.Error())
-			}
-			rows, err := curLong.FetchAll()
-			if err != nil {
-				return errgo.Newf("Невозможно получить описание для \"%s\"\nОшибка: %s", procedureName, err.Error())
-			}
 
 			for _, row := range rows {
 				a := aFree.Get()

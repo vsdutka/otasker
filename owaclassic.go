@@ -2,9 +2,20 @@
 package otasker
 
 func NewOwaClassicProcRunner() func() OracleTasker {
-	const (
-		stmEvalSessionID = `select kill_session.get_current_session_id from dual`
-		stmMain          = `
+	return func() OracleTasker {
+		return newTaskerIntf(classicEvalSessionID, classicMain, classicGetRestChunk, classicKillSession, classicFileUpload)
+	}
+}
+
+func NewOwaClassicProcTasker() func() oracleTasker {
+	return func() oracleTasker {
+		return newTasker(classicEvalSessionID, classicMain, classicGetRestChunk, classicKillSession, classicFileUpload)
+	}
+}
+
+const (
+	classicEvalSessionID = `select kill_session.get_current_session_id from dual`
+	classicMain          = `
 Declare
   rc__ number(2,0);
   l_num_params number;
@@ -109,7 +120,7 @@ exception
     :sqlerrtrace := DBMS_UTILITY.FORMAT_ERROR_BACKTRACE();
 end;`
 
-		stmGetRestChunk = `begin
+	classicGetRestChunk = `begin
   :Data:=hrslt.GET32000(:bNextChunkExists);
   if :bNextChunkExists = 0 then
     dbms_session.modify_package_state(dbms_session.reinitialize);
@@ -125,7 +136,7 @@ exception
     :sqlerrm := sqlerrm;
     :sqlerrtrace := DBMS_UTILITY.FORMAT_ERROR_BACKTRACE();
 end;`
-		stmKillSession = `
+	classicKillSession = `
 begin
   kill_session.session_id:=:sess_id;
   :ret:=kill_session.kill_session_by_session_id(:out_err_msg);
@@ -139,7 +150,7 @@ exception
 	end if;
 end;
 `
-		stmFileUpload = `
+	classicFileUpload = `
 declare
   l_item_id varchar2(40) := :item_id;/*Для совместимости*/
   l_application_id varchar2(40) := :application_id;/*Для совместимости*/
@@ -162,9 +173,4 @@ exception
     :sqlerrm := 'Unable to upload file "'||:name||'" '||sqlerrm;
     :sqlerrtrace := DBMS_UTILITY.FORMAT_ERROR_BACKTRACE();
 end;`
-	)
-
-	return func() OracleTasker {
-		return newOracleProcTasker(stmEvalSessionID, stmMain, stmGetRestChunk, stmKillSession, stmFileUpload)
-	}
-}
+)

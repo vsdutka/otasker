@@ -11,7 +11,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -52,7 +51,6 @@ type OracleTasker interface {
 		dumpErrorFileName string) OracleTaskResult
 	CloseAndFree() error
 	Break() error
-	Info(sortKeyName string) OracleTaskInfo
 }
 
 type oracleTaskerStep struct {
@@ -76,8 +74,8 @@ const (
 )
 
 type oracleTasker struct {
-	sync.Mutex                     //включается только при изменении данных, используемых в Break() и Info()
-	cafMutex            sync.Mutex // требуется для синхронизации разрушения объекта C(lose )A(nd )F(ree )Mutex
+	mt                  sync.Mutex //включается только при изменении данных, используемых в Break() и Info()
+	cafMutex            sync.Mutex //требуется для синхронизации разрушения объекта C(lose )A(nd )F(ree )Mutex
 	opLoggerName        string
 	streamID            string
 	conn                *oracle.Connection
@@ -109,18 +107,23 @@ var stepsFree = sync.Pool{
 	New: func() interface{} { return new(oracleTaskerStep) },
 }
 
-func newOracleProcTasker(stmEvalSessionID, stmMain, stmGetRestChunk, stmKillSession, stmFileUpload string) OracleTasker {
-	r := oracleTasker{}
-	r.stateIsWorking = false
-	r.stateCreateDT = time.Now()
-	r.stateLastFinishDT = time.Time{}
-	r.logSteps = make(map[int]*oracleTaskerStep)
+func newTasker(stmEvalSessionID, stmMain, stmGetRestChunk, stmKillSession, stmFileUpload string) oracleTasker {
+	return oracleTasker{
+		stateIsWorking:    false,
+		stateCreateDT:     time.Now(),
+		stateLastFinishDT: time.Time{},
+		logSteps:          make(map[int]*oracleTaskerStep),
 
-	r.stmEvalSessionID = stmEvalSessionID
-	r.stmMain = stmMain
-	r.stmGetRestChunk = stmGetRestChunk
-	r.stmKillSession = stmKillSession
-	r.stmFileUpload = stmFileUpload
+		stmEvalSessionID: stmEvalSessionID,
+		stmMain:          stmMain,
+		stmGetRestChunk:  stmGetRestChunk,
+		stmKillSession:   stmKillSession,
+		stmFileUpload:    stmFileUpload,
+	}
+}
+
+func newTaskerIntf(stmEvalSessionID, stmMain, stmGetRestChunk, stmKillSession, stmFileUpload string) OracleTasker {
+	r := newTasker(stmEvalSessionID, stmMain, stmGetRestChunk, stmKillSession, stmFileUpload)
 	return &r
 }
 
@@ -166,8 +169,8 @@ func (r *oracleTasker) Run(sessionID, taskID, userName, userPass, connStr,
 	r.cafMutex.Lock()
 
 	func() {
-		r.Lock()
-		defer r.Unlock()
+		r.mt.Lock()
+		defer r.mt.Unlock()
 		r.initLog()
 		r.logRequestProceeded++
 		r.logSessionID = sessionID
@@ -182,14 +185,19 @@ func (r *oracleTasker) Run(sessionID, taskID, userName, userPass, connStr,
 	defer func() {
 
 		func() {
-			r.Lock()
-			defer r.Unlock()
+			r.mt.Lock()
+			defer r.mt.Unlock()
 			r.stateIsWorking = false
 			r.stateLastFinishDT = time.Now()
 		}()
 
 		r.cafMutex.Unlock()
 	}()
+
+	if len(cgiEnv) == 0 {
+		fmt.Println("Run len(cgiEnv) == 0")
+		os.Exit(-1)
+	}
 
 	bg := time.Now()
 	var needDisconnect bool
@@ -204,8 +212,8 @@ func (r *oracleTasker) Run(sessionID, taskID, userName, userPass, connStr,
 
 		res.Duration = int64(time.Since(bg) / time.Second)
 		func() {
-			r.Lock()
-			defer r.Unlock()
+			r.mt.Lock()
+			defer r.mt.Unlock()
 			r.logErrorsNum++
 		}()
 		return res
@@ -222,8 +230,8 @@ func (r *oracleTasker) Run(sessionID, taskID, userName, userPass, connStr,
 		}
 		res.Duration = int64(time.Since(bg) / time.Second)
 		func() {
-			r.Lock()
-			defer r.Unlock()
+			r.mt.Lock()
+			defer r.mt.Unlock()
 			r.logErrorsNum++
 		}()
 		return res
@@ -272,7 +280,7 @@ func (r *oracleTasker) disconnect() (err error) {
 			r.openStep(stepDisconnectNum, "disconnect")
 			r.setStepInfo(stepDisconnectNum, "disconnect", "disconnect", false)
 
-			r.Lock()
+			r.mt.Lock()
 
 			defer func() {
 				r.conn = nil
@@ -280,7 +288,7 @@ func (r *oracleTasker) disconnect() (err error) {
 				r.connUserPass = ""
 				r.connStr = ""
 				r.sessID = ""
-				r.Unlock()
+				r.mt.Unlock()
 				r.setStepInfo(stepDisconnectNum, "disconnect", "disconnect", true)
 				r.closeStep(stepDisconnectNum)
 
@@ -480,10 +488,8 @@ func (r *oracleTasker) run(res *OracleTaskResult, paramStoreProc, beforeScript, 
 		extParamValueMaxLen int
 	)
 	for paramName, paramValue := range urlParams {
-		paramType, paramTypeName, err := ArgumentInfo(r.connStr, procName, paramName)
-		if err != nil {
-			return err
-		}
+		paramType, paramTypeName, _ := ArgumentInfo(r.connStr, procName, paramName)
+
 		err = prepareParam(cur, sqlParams,
 			paramName, paramValue,
 			paramType, paramTypeName,
@@ -506,9 +512,7 @@ func (r *oracleTasker) run(res *OracleTaskResult, paramStoreProc, beforeScript, 
 		if len(paramValue[0]) > extParamValueMaxLen {
 			extParamValueMaxLen = len(paramValue[0])
 		}
-		//		if len(paramValue) > 1 {
-		//			panic("Len too long")
-		//		}
+
 	}
 
 	if reqFiles != nil {
@@ -518,10 +522,8 @@ func (r *oracleTasker) run(res *OracleTaskResult, paramStoreProc, beforeScript, 
 			if err != nil {
 				return err
 			}
-			paramType, paramTypeName, err1 := ArgumentInfo(r.connStr, procName, paramName)
-			if err1 != nil {
-				return err1
-			}
+			paramType, paramTypeName, _ := ArgumentInfo(r.connStr, procName, paramName)
+
 			err = prepareParam(cur, sqlParams,
 				paramName, fileName,
 				paramType, paramTypeName,
@@ -592,6 +594,16 @@ func (r *oracleTasker) run(res *OracleTaskResult, paramStoreProc, beforeScript, 
 	r.setStepInfo(stepRunNum, stepStm, stepStmForShowing, false)
 
 	if err := cur.Execute(stepStm, nil, stepStmParams); err != nil {
+		//		e := UnMask(err)
+		//		if e != nil {
+		//			if e.Code == 6550 {
+		//				for k, v := range stepStmParams {
+		//					v1 := v.(*oracle.Variable)
+		//					fmt.Println(k, v1.IsArray(), v1.AllocatedElements(), v1.ArrayLength(), v1.Size(), v1.String())
+		//				}
+		//			}
+		//			os.Exit(-1)
+		//		}
 		return err
 	}
 
@@ -962,8 +974,8 @@ func (r *oracleTasker) saveFileToDB(paramStoreProc, beforeScript, afterScript, d
 }
 
 func (r *oracleTasker) openStep(stepNum int, stepType string) {
-	r.Lock()
-	defer r.Unlock()
+	r.mt.Lock()
+	defer r.mt.Unlock()
 
 	stepName := fmt.Sprintf("%03d - %s", stepNum, stepType)
 	intf := stepsFree.Get()
@@ -978,15 +990,15 @@ func (r *oracleTasker) openStep(stepNum int, stepType string) {
 }
 
 func (r *oracleTasker) closeStep(stepNum int) {
-	r.Lock()
-	defer r.Unlock()
+	r.mt.Lock()
+	defer r.mt.Unlock()
 	step := r.logSteps[stepNum]
 	step.stepFn = time.Now()
 	r.logSteps[stepNum] = step
 }
 func (r *oracleTasker) setStepInfo(stepNum int, stepStm, stepStmForShowning string, stepSuccess bool) {
-	r.Lock()
-	defer r.Unlock()
+	r.mt.Lock()
+	defer r.mt.Unlock()
 	step := r.logSteps[stepNum]
 	step.stepStm = stepStm
 	step.stepStmForShowning = stepStmForShowning
@@ -995,8 +1007,8 @@ func (r *oracleTasker) setStepInfo(stepNum int, stepStm, stepStmForShowning stri
 }
 
 func (r *oracleTasker) Break() error {
-	r.Lock()
-	defer r.Unlock()
+	r.mt.Lock()
+	defer r.mt.Unlock()
 	// Прерываем выполнение текущей сессии.
 	// Используем параметры сохраненные подключения
 	if !r.stateIsWorking {
@@ -1087,8 +1099,8 @@ func (r *oracleTasker) dumpError(userName, connStr, dumpErrorFileName string, er
 }
 
 func (r *oracleTasker) lastStms() (string, string) {
-	r.Lock()
-	defer r.Unlock()
+	r.mt.Lock()
+	defer r.mt.Unlock()
 
 	var keys []int
 	for k := range r.logSteps {
@@ -1133,121 +1145,6 @@ func packError(err error) (int, []byte, bool) {
 
 }
 
-type sesStep struct {
-	Name      string
-	Duration  int32
-	Statement string
-}
-
-type OracleTaskInfo struct {
-	SortKey          string
-	HandlerID        string
-	MessageID        string
-	Database         string
-	UserName         string
-	Password         string
-	SessionID        string
-	Created          string
-	RequestProceeded int
-	ErrorsNumber     int
-	IdleTime         int32
-	LastDuration     int32
-	LastSteps        map[int]sesStep
-	StepNum          int32
-	StepName         string
-	LastDocument     string
-	LastProcedure    string
-	NowInProcess     bool
-}
-
-type OracleTaskInfos []OracleTaskInfo
-
-func (slice OracleTaskInfos) Len() int {
-	return len(slice)
-}
-
-func (slice OracleTaskInfos) Less(i, j int) bool {
-	return slice[i].SortKey < slice[j].SortKey
-}
-
-func (slice OracleTaskInfos) Swap(i, j int) {
-	slice[i], slice[j] = slice[j], slice[i]
-}
-
-func (r *oracleTasker) Info(sortKeyName string) OracleTaskInfo {
-	r.Lock()
-	defer r.Unlock()
-
-	processTime := int32(0)
-	sSteps := make(map[int]sesStep)
-
-	var keys []int
-	for k := range r.logSteps {
-		keys = append(keys, k)
-	}
-	sort.Ints(keys)
-
-	i := 1
-
-	stepName := ""
-	for _, v := range keys {
-		val := r.logSteps[v]
-		stepTime := int32(0)
-		if (val.stepFn == time.Time{}) {
-			stepName = val.stepName
-			stepTime = int32(time.Since(val.stepBg) / time.Millisecond)
-		} else {
-			stepTime = int32(val.stepFn.Sub(val.stepBg) / time.Millisecond)
-		}
-
-		processTime = processTime + stepTime
-		sSteps[i] = sesStep{Name: val.stepName, Duration: stepTime, Statement: val.stepStmForShowning}
-
-		i = i + 1
-	}
-
-	idleTime := int32(time.Since(r.stateLastFinishDT) / time.Millisecond)
-	if (r.stateLastFinishDT == time.Time{}) {
-		idleTime = 0
-	}
-
-	res := OracleTaskInfo{
-		"",
-		r.logSessionID,
-		r.logTaskID,
-		r.logConnStr,
-		r.logUserName,
-		r.logUserPass,
-		r.sessID,
-		r.stateCreateDT.Format(time.RFC3339),
-		r.logRequestProceeded,
-		r.logErrorsNum,
-		idleTime,
-		processTime,
-		sSteps,
-		int32(len(sSteps) + 1),
-		stepName,
-		r.logProcName,
-		r.logProcName,
-		r.stateIsWorking,
-	}
-	rflct := reflect.ValueOf(res)
-	f := reflect.Indirect(rflct).FieldByName(sortKeyName)
-
-	switch k := f.Kind(); k {
-	case reflect.Invalid:
-		res.SortKey = "<invalid Value>"
-	case reflect.String:
-		res.SortKey = f.String()
-	case reflect.Int, reflect.Int32, reflect.Int64:
-		res.SortKey = fmt.Sprintf("%040d", f.Int())
-	case reflect.Bool:
-		res.SortKey = fmt.Sprintf("%v", f.Bool())
-	}
-
-	return res
-}
-
 func prepareParam(
 	cur *oracle.Cursor, params map[string]interface{},
 	paramName string, paramValue []string,
@@ -1269,7 +1166,6 @@ func prepareParam(
 		{
 			value := paramValue[0]
 			if lVar, err = cur.NewVar(&value); err != nil {
-				panic(fmt.Sprintf("1 - %v %v %v", paramName, paramType, paramTypeName))
 				return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
 			}
 			params[paramName] = lVar
@@ -1304,12 +1200,7 @@ func prepareParam(
 	case oNumber:
 		{
 			value := paramValue[0]
-			//			if lVar, err = cur.NewVar(&value); err != nil {
-
-			//				return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
-			//			}
 			if lVar, err = cur.NewVariable(1, oracle.FloatVarType, 0); err != nil {
-
 				return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
 			}
 			lVar.SetValue(0, value)
@@ -1347,7 +1238,6 @@ func prepareParam(
 		{
 			value := paramValue[0]
 			if lVar, err = cur.NewVar(&value); err != nil {
-
 				return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
 			}
 			params[paramName] = lVar
@@ -1612,7 +1502,29 @@ func prepareParam(
 		}
 	default:
 		{
+			//Параметры, отсутствующие в списке параметров процедуры.
+			//Сохраняются только в контексте
+			value := paramValue[0]
+			if lVar, err = cur.NewVar(&value); err != nil {
+				return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
+			}
+			params[paramName] = lVar
 
+			// stmExecDeclarePart
+			stmShowDeclarePart.WriteString(fmt.Sprintf("  l_%s varchar2(32767);\n", paramName))
+			//stmExecSetPart,
+			stmShowSetPart.WriteString(fmt.Sprintf("  l_%s := '%s';\n", paramName, strings.Replace(value, "'", "''", -1)))
+
+			// Добавление вызова сохранения параметра
+			if paramStoreProc != "" {
+				if lVar, err = cur.NewVar(&value); err != nil {
+					return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
+				}
+				params[paramName+"_s"] = lVar
+				stmExecStoreInContext.WriteString(fmt.Sprintf("  %s('%s', :%s_s);\n", paramStoreProc, paramName, paramName))
+				stmShowStoreInContext.WriteString(fmt.Sprintf("  %s('%s', l_%s);\n", paramStoreProc, paramName, paramName))
+			}
+			return nil
 		}
 	}
 	return nil

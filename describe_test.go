@@ -125,7 +125,7 @@ func BenchmarkDescribe(b *testing.B) {
 func TestDescribe1(t *testing.T) {
 	conn := getConnection("a/aaa111@dp-tst9")
 	defer conn.Close()
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 1000; i++ {
 		if err := Describe(conn, "tst9", "f"); err != nil {
 			t.Log(err)
 			t.Fail()
@@ -143,7 +143,7 @@ func TestDescribeNotExists(t *testing.T) {
 func TestDescribeConcurent10(t *testing.T) {
 	var wg sync.WaitGroup
 
-	for j := 0; j < 10; j++ {
+	for j := 0; j < 30; j++ {
 		wg.Add(1)
 		go func() {
 			TestDescribe1(t)

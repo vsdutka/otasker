@@ -2,9 +2,20 @@
 package otasker
 
 func NewOwaApexProcRunner() func() OracleTasker {
-	const (
-		stmEvalSessionID = `select kill_session.get_current_session_id from dual`
-		stmMain          = `
+	return func() OracleTasker {
+		return newTaskerIntf(apexEvalSessionID, apexMain, apexGetRestChunk, apexKillSession, apexFileUpload)
+	}
+}
+
+func NewOwaApexProcTasker() func() oracleTasker {
+	return func() oracleTasker {
+		return newTasker(apexEvalSessionID, apexMain, apexGetRestChunk, apexKillSession, apexFileUpload)
+	}
+}
+
+const (
+	apexEvalSessionID = `select kill_session.get_current_session_id from dual`
+	apexMain          = `
 Declare
   rc__ number(2,0);
   l_num_params number;
@@ -107,7 +118,7 @@ exception
     :sqlerrtrace := DBMS_UTILITY.FORMAT_ERROR_BACKTRACE();
 end;`
 
-		stmGetRestChunk = `begin
+	apexGetRestChunk = `begin
   :Data:=apex_public_user.hrslt.GET32000(:bNextChunkExists);
   if :bNextChunkExists = 0 then
     dbms_session.modify_package_state(dbms_session.reinitialize);
@@ -123,7 +134,7 @@ exception
     :sqlerrm := sqlerrm;
     :sqlerrtrace := DBMS_UTILITY.FORMAT_ERROR_BACKTRACE();
 end;`
-		stmKillSession = `
+	apexKillSession = `
 begin
   kill_session.session_id:=:sess_id;
   :ret:=kill_session.kill_session_by_session_id(:out_err_msg);
@@ -137,7 +148,7 @@ exception
 	end if;
 end;
 `
-		stmFileUpload = `
+	apexFileUpload = `
 declare
   l_doc_size number := :doc_size; /*Для совместимости*/
   l_pt_dc_id varchar2(40) := null; /*Для совместимости*/
@@ -166,9 +177,4 @@ exception
     :sqlerrm := 'Unable to upload file "'||:name||'" '||sqlerrm;
     :sqlerrtrace := DBMS_UTILITY.FORMAT_ERROR_BACKTRACE();
 end;`
-	)
-
-	return func() OracleTasker {
-		return newOracleProcTasker(stmEvalSessionID, stmMain, stmGetRestChunk, stmKillSession, stmFileUpload)
-	}
-}
+)
