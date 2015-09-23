@@ -3,6 +3,7 @@ package otasker
 
 import (
 	"net/url"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 
 type test struct {
 	name         string
+	path         string
 	sessionID    string
 	taskID       string
 	userName     string
@@ -46,7 +48,8 @@ func workerRun(t *testing.T, v test) {
 	}()
 
 	res := Run(
-		"/asrolf-ti11",
+		v.path,
+		ClassicTasker,
 		v.sessionID,
 		v.taskID,
 		v.userName,
@@ -60,7 +63,6 @@ func workerRun(t *testing.T, v test) {
 		v.procName,
 		v.urlValues,
 		v.files,
-		NewOwaClassicProcTasker(),
 		v.waitTimeout,
 		v.idleTimeout,
 		".\\log.log")
@@ -74,9 +76,11 @@ func workerRun(t *testing.T, v test) {
 
 }
 func TestWorkerRun(t *testing.T) {
+	var vpath = strings.ToUpper("TestWorkerRun")
 	var tests = []test{
 		{
 			name:      "Вызов простой процедуры",
+			path:      vpath,
 			sessionID: "sess1",
 			taskID:    "TASK1",
 			userName:  user,
@@ -108,6 +112,7 @@ end;`,
 		},
 		{
 			name:      "Неправильное имя пользователя или пароль",
+			path:      vpath,
 			sessionID: "sess2",
 			taskID:    "TASK2",
 			userName:  "user",
@@ -139,6 +144,7 @@ end;`,
 		},
 		{
 			name:       "Пользователь заблокирован",
+			path:       vpath,
 			sessionID:  "sess3",
 			taskID:     "TASK3",
 			userName:   "TEST001",
@@ -160,6 +166,7 @@ end;`,
 		},
 		{
 			name:      "Длинный запрос 1 - червяк",
+			path:      vpath,
 			sessionID: "sess4",
 			taskID:    "TASK4",
 			userName:  user,
@@ -192,6 +199,7 @@ end;`,
 		},
 		{
 			name:       "Длинный запрос 1 - результат",
+			path:       vpath,
 			sessionID:  "sess4",
 			taskID:     "TASK4",
 			userName:   user,
@@ -213,6 +221,7 @@ end;`,
 		},
 		{
 			name:       "Длинный запрос 2 - червяк",
+			path:       vpath,
 			sessionID:  "sess5",
 			taskID:     "TASK5.1",
 			userName:   user,
@@ -234,6 +243,7 @@ end;`,
 		},
 		{
 			name:       "Длинный запрос 2 - прервать запрос",
+			path:       vpath,
 			sessionID:  "sess5",
 			taskID:     "TASK5.2",
 			userName:   user,
@@ -255,6 +265,7 @@ end;`,
 		},
 		{
 			name:       "Длинный запрос 2 - результат",
+			path:       vpath,
 			sessionID:  "sess5",
 			taskID:     "TASK5.1",
 			userName:   user,
@@ -281,21 +292,23 @@ end;`,
 	}
 
 	wlock.Lock()
-	if len(wlist) > 0 {
-		for k, _ := range wlist {
+	if len(wlist[vpath]) > 0 {
+		for k, _ := range wlist[vpath] {
 			t.Log(k)
 		}
-		t.Fatalf("len(wlist) = %d", len(wlist))
+		t.Fatalf("len(wlist[vpath]) = %d", len(wlist[vpath]))
 	}
 	wlock.Unlock()
 }
 
 func TestWorkerBreak(t *testing.T) {
+	var vpath = strings.ToUpper("TestWorkerBreak")
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
 		workerRun(t, test{
 			name:      "Длинный запрос 3 - запрос прерван",
+			path:      vpath,
 			sessionID: "sess6",
 			taskID:    "TASK6",
 			userName:  user,
@@ -331,12 +344,12 @@ end;`,
 
 	go func() {
 		//Пробуем прервать сессию, которой нет. Ошибки не должно быть
-		err := Bkeak("/asrolf-ti11", "sess6-1")
+		err := Break(vpath, "sess6-1")
 		if err != nil {
 			t.Fatal(err)
 		}
 		time.Sleep(2 * time.Second)
-		err = Bkeak("/asrolf-ti11", "sess6")
+		err = Break(vpath, "sess6")
 		if err != nil {
 			t.Fatal(err)
 		}

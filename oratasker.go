@@ -1165,13 +1165,15 @@ func prepareParam(
 	case oString:
 		{
 			value := paramValue[0]
-			if lVar, err = cur.NewVar(&value); err != nil {
+			if lVar, err = cur.NewVariable(0, oracle.StringVarType, uint(len(value))); err != nil {
 				return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
 			}
+			lVar.SetValue(0, value)
+
 			params[paramName] = lVar
 
 			// stmExecDeclarePart
-			stmShowDeclarePart.WriteString(fmt.Sprintf("  l_%s %s;\n", paramName, paramTypeName))
+			stmShowDeclarePart.WriteString(fmt.Sprintf("  l_%s %s(%d);\n", paramName, paramTypeName, len(value)))
 			//stmExecSetPart,
 			stmShowSetPart.WriteString(fmt.Sprintf("  l_%s := '%s';\n", paramName, strings.Replace(value, "'", "''", -1)))
 			// Вызов процедуры - Формирование строки с параметрами для вызова процедуры
@@ -1306,10 +1308,12 @@ func prepareParam(
 		}
 	case oBoolean:
 		{
-			value := paramValue[0]
-			if lVar, err = cur.NewVar(&value); err != nil {
+			value := strings.ToLower(paramValue[0])
+			if lVar, err = cur.NewVariable(0, oracle.StringVarType, uint(len(value))); err != nil {
 				return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
 			}
+			lVar.SetValue(0, value)
+
 			params[paramName] = lVar
 
 			// stmExecDeclarePart
@@ -1320,7 +1324,7 @@ func prepareParam(
 			if stmExecProcParams.Len() != 0 {
 				stmExecProcParams.WriteString(", ")
 			}
-			stmExecProcParams.WriteString(fmt.Sprintf("%s => :%s", paramName, paramName))
+			stmExecProcParams.WriteString(fmt.Sprintf("%s => :%s = 'true'", paramName, paramName))
 			// Отображение вызова процедуры - Формирование строки с параметрами для вызова процедуры
 			if stmShowProcParams.Len() != 0 {
 				stmShowProcParams.WriteString(", ")
@@ -1505,11 +1509,6 @@ func prepareParam(
 			//Параметры, отсутствующие в списке параметров процедуры.
 			//Сохраняются только в контексте
 			value := paramValue[0]
-			if lVar, err = cur.NewVar(&value); err != nil {
-				return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
-			}
-			params[paramName] = lVar
-
 			// stmExecDeclarePart
 			stmShowDeclarePart.WriteString(fmt.Sprintf("  l_%s varchar2(32767);\n", paramName))
 			//stmExecSetPart,

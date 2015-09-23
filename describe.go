@@ -287,6 +287,7 @@ end;`
          
           case 
             when a.type_name is not null then a.type_owner||'.'||a.type_name||decode(a.type_subname, null, '', '.'||a.type_subname) 
+			/*when a.pls_type in ('CHAR', 'VARCHAR2', 'STRING') then a.pls_type||'('||nvl(a.char_length, 32767)||')'*/
             else a.pls_type
           end data_type_name` + stm_descr_args + `
         and a.object_id = :1

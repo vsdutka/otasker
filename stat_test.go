@@ -8,10 +8,12 @@ import (
 	"time"
 )
 
-func TestStatCollect(t *testing.T) {
+func prepareData(t *testing.T, vpath string) {
+
 	for i := 0; i < 10; i++ {
 		workerRun(t, test{
 			name:      fmt.Sprintf("%03d", i),
+			path:      vpath,
 			sessionID: fmt.Sprintf("sess%03d", 10-i),
 			taskID:    fmt.Sprintf("TASK%03d", i),
 			userName:  user,
@@ -38,8 +40,13 @@ end;`, i),
 			resContent:   "1",
 		})
 	}
+}
 
-	res := Collect("/asrolf-ti11", "HandlerID")
+func TestStatCollect(t *testing.T) {
+	const vpath = "/SORTED"
+	prepareData(t, vpath)
+	res := Collect(vpath, "HandlerID", false)
+
 	if len(res) < 10 {
 		t.Fatalf("%s: got \"%v\",\nwant \"%v\"", "StatCollect: Len - ", len(res), 10)
 	}
@@ -49,5 +56,22 @@ end;`, i),
 	}
 	if res[9].MessageID != "TASK000" {
 		t.Fatalf("%s: got \"%v\",\nwant \"%v\"", "StatCollect: res[9].MessageID", res[0].MessageID, "TASK000")
+	}
+}
+
+func TestStatCollectReverse(t *testing.T) {
+	const vpath = "/REVERSE"
+	prepareData(t, vpath)
+	res := Collect(vpath, "HandlerID", true)
+
+	if len(res) < 10 {
+		t.Fatalf("%s: got \"%v\",\nwant \"%v\"", "StatCollect: Len - ", len(res), 10)
+	}
+
+	if res[0].MessageID != "TASK000" {
+		t.Fatalf("%s: got \"%v\",\nwant \"%v\"", "StatCollect: res[0].MessageID", res[0].MessageID, "TASK000")
+	}
+	if res[9].MessageID != "TASK009" {
+		t.Fatalf("%s: got \"%v\",\nwant \"%v\"", "StatCollect: res[9].MessageID", res[0].MessageID, "TASK009")
 	}
 }

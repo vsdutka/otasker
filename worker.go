@@ -2,11 +2,14 @@
 package otasker
 
 import (
+	"github.com/vsdutka/metrics"
 	"net/url"
 	"strings"
 	"sync"
 	"time"
 )
+
+var numberOfSessions = metrics.NewInt("PersistentHandler_Number_Of_Sessions", "Server - Number of persistent sessions", "Pieces", "p")
 
 type work struct {
 	sessionID         string
@@ -66,14 +69,20 @@ func (w *worker) worked() int64 {
 	return 0
 }
 
-func (w *worker) listen(ID string, idleTimeout time.Duration) {
+func (w *worker) listen(path, ID string, idleTimeout time.Duration) {
 	w.signalChan <- ""
 	defer func() {
 		// Удаляем данный обработчик из списка доступных
 		wlock.Lock()
-		delete(wlist, ID)
+		delete(wlist[path], ID)
 		wlock.Unlock()
 		w.CloseAndFree()
+		w.Lock()
+		for k, _ := range w.outChanList {
+			delete(w.outChanList, k)
+		}
+		w.Unlock()
+		numberOfSessions.Add(-1)
 	}()
 
 	for {
@@ -121,8 +130,23 @@ var (
 	wlist = make(map[string]map[string]*worker)
 )
 
+const (
+	ClassicTasker = iota
+	ApexTasker
+	EkbTasker
+)
+
+var (
+	taskerFactory = map[int]func() oracleTasker{
+		ClassicTasker: NewOwaClassicProcTasker(),
+		ApexTasker:    NewOwaApexProcTasker(),
+		EkbTasker:     NewOwaEkbProcTasker(),
+	}
+)
+
 func Run(
-	path,
+	path string,
+	typeTasker int,
 	sessionID,
 	taskID,
 	userName,
@@ -136,7 +160,7 @@ func Run(
 	procName string,
 	urlParams url.Values,
 	reqFiles *Form,
-	fn func() oracleTasker,
+	//fn func() oracleTasker,
 	waitTimeout, idleTimeout time.Duration,
 	dumpFileName string,
 ) OracleTaskResult {
@@ -149,15 +173,19 @@ func Run(
 			defer wlock.Unlock()
 
 			w = &worker{
-				oracleTasker: fn(),
+				oracleTasker: taskerFactory[typeTasker](),
 				signalChan:   make(chan string, 1),
 				inChan:       make(chan work),
 				outChanList:  make(map[string]chan OracleTaskResult),
 				startedAt:    time.Time{},
 				started:      false,
 			}
-			go w.listen(strings.ToUpper(sessionID), idleTimeout)
+			if _, ok := wlist[strings.ToUpper(path)]; !ok {
+				wlist[strings.ToUpper(path)] = make(map[string]*worker)
+			}
 			wlist[strings.ToUpper(path)][strings.ToUpper(sessionID)] = w
+			go w.listen(strings.ToUpper(path), strings.ToUpper(sessionID), idleTimeout)
+			numberOfSessions.Add(1)
 		}
 		return w
 	}()
@@ -204,6 +232,9 @@ func Run(
 	return func() OracleTaskResult {
 		select {
 		case res := <-outChan:
+			w.Lock()
+			delete(w.outChanList, taskID)
+			w.Unlock()
 			return res
 		case <-time.After(waitTimeout):
 			{
@@ -214,58 +245,26 @@ func Run(
 	}()
 }
 
-func Bkeak(path, sessionID string) error {
+func Break(path, sessionID string) error {
 	wlock.RLock()
 	w, ok := wlist[strings.ToUpper(path)][strings.ToUpper(sessionID)]
 	wlock.RUnlock()
 	if !ok {
 		return nil
 	}
-	return w.Break()
+	//Если вокер есть, проверяемего статус
+	select {
+	case <-w.signalChan:
+		{
+			//Удалось прочитать сигнал о незанятости вокера. Некого прерыват. Выходим
+			return nil
+
+		}
+	default:
+		{
+			// Воркер занят. Прерываем его
+			return w.Break()
+		}
+	}
+
 }
-
-//func main() {
-//	readyChan := make(chan bool)
-//	dataChan := make(chan int)
-
-//	go func() {
-//		readyChan <- true
-//		for {
-//			select {
-//			case t1 := <- dataChan:
-//				{
-//					fmt.Println(t1)
-//					time.Sleep(10*time.Second)
-//					readyChan <- true
-//				}
-//			/*case <-time.After(10 * time.Second):
-//				{
-//					fmt.Println("timeout")
-//				}*/
-//			}
-//		}
-//	}()
-//	select {
-//	case <-readyChan:
-//	{
-//		dataChan<-20
-//	}
-//	case  <-time.After(8 * time.Second):
-//				{
-//					fmt.Println("timeout 1")
-//				}
-//	}
-
-//	select {
-//	case <-readyChan:
-//	{
-//		dataChan<-30
-//	}
-//	case  <-time.After(10 * time.Second):
-//				{
-//					fmt.Println("timeout 1")
-//				}
-//	}
-//	<-time.After(20 * time.Second)
-//	fmt.Println("Exit")
-//}

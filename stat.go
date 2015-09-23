@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -122,13 +123,17 @@ func (r *oracleTasker) info(sortKeyName string) OracleTaskerStat {
 	return res
 }
 
-func Collect(path, sortKeyName string) OracleTaskersStats {
+func Collect(path, sortKeyName string, reversed bool) OracleTaskersStats {
 	res := make(OracleTaskersStats, 0)
 	wlock.RLock()
 	defer wlock.RUnlock()
-	for _, v := range wlist[path] {
+	for _, v := range wlist[strings.ToUpper(path)] {
 		res = append(res, v.info(sortKeyName))
 	}
-	sort.Sort(res)
+	if reversed {
+		sort.Sort(sort.Reverse(res))
+	} else {
+		sort.Sort(res)
+	}
 	return res
 }

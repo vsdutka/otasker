@@ -105,7 +105,7 @@ func TestDescribeAfterRecompile(t *testing.T) {
 		t.Fail()
 	}
 	if timestamp1 == timestamp2 {
-		t.Fatalf("got %v,\nwant %v", timestamp2, timestamp1)
+		t.Fatalf("got %v,\nwant %v", timestamp2.Format(time.RFC3339Nano), timestamp1.Format(time.RFC3339Nano))
 	}
 }
 
