@@ -2,11 +2,26 @@
 package otasker
 
 import (
+	"github.com/vsdutka/metrics"
 	"gopkg.in/errgo.v1"
 	"gopkg.in/goracle.v1/oracle"
 	"strings"
 	"sync"
 	"time"
+)
+
+var (
+	describeTotalTime = metrics.NewInt("Describe_Total_Time", "Describe - Total time in nanoseconds", "Nanoseconds", "ns")
+
+	describeRLockWaitTime    = metrics.NewInt("Describe_RLock_Wait_Time", "Describe - Wait time to RLock in nanoseconds", "Nanoseconds", "ns")
+	describeRLockWaitTimes   = metrics.NewInt("Describe_RLock_Wait_Times", "Describe - Total number of Wait to RLock", "pieces", "ps")
+	describeRLockWaitNum     = metrics.NewInt("Describe_RLock_Wait_Nums", "Describe - Current number of Wait to RLock", "pieces", "ps")
+	describeRLockWaitTimeAve = metrics.NewFloat("Describe_RLock_Wait_Time_Ave", "Describe - Average Wait time to RLock in nanoseconds", "Nanoseconds", "ns")
+
+	describeLockWaitTime    = metrics.NewInt("Describe_Lock_Wait_Time", "Describe - Wait time to Lock in nanoseconds", "Nanoseconds", "ns")
+	describeLockWaitTimes   = metrics.NewInt("Describe_Lock_Wait_Times", "Describe - Total number of Wait to Lock", "pieces", "ps")
+	describeLockWaitNum     = metrics.NewInt("Describe_Lock_Wait_Nums", "Describe - Current number of Wait to Lock", "pieces", "ps")
+	describeLockWaitTimeAve = metrics.NewFloat("Describe_Lock_Wait_Time_Ave", "Describe - Average Wait time to Lock in nanoseconds", "Nanoseconds", "ns")
 )
 
 type argument struct {
@@ -29,9 +44,36 @@ var (
 	}
 )
 
-func ProcedureInfo(dbName, procedureName string) (time.Time, string, error) {
+func doRLock() {
+	describeRLockWaitNum.Add(1)
+	bg := time.Now()
 	plock.RLock()
-	defer plock.RUnlock()
+	tm := time.Since(bg).Nanoseconds()
+	describeRLockWaitNum.Add(-1)
+	describeRLockWaitTime.Add(tm)
+	describeRLockWaitTimes.Add(1)
+	describeRLockWaitTimeAve.Set(float64(describeRLockWaitTime.Get()) / float64(describeRLockWaitTimes.Get()))
+}
+func doRUnlock() {
+	plock.RUnlock()
+}
+func doLock() {
+	describeLockWaitNum.Add(1)
+	bg := time.Now()
+	plock.Lock()
+	tm := time.Since(bg).Nanoseconds()
+	describeLockWaitNum.Add(-1)
+	describeLockWaitTime.Add(tm)
+	describeLockWaitTimes.Add(1)
+	describeLockWaitTimeAve.Set(float64(describeLockWaitTime.Get()) / float64(describeLockWaitTimes.Get()))
+}
+func doUnlock() {
+	plock.Unlock()
+}
+
+func ProcedureInfo(dbName, procedureName string) (time.Time, string, error) {
+	doRLock()
+	defer doRUnlock()
 	if p, ok := plist[strings.ToUpper(dbName+"."+procedureName)]; ok {
 		return p.timestamp, p.packageName, nil
 	}
@@ -39,8 +81,8 @@ func ProcedureInfo(dbName, procedureName string) (time.Time, string, error) {
 }
 
 func ArgumentInfo(dbName, procedureName, argumentName string) (int32, string, error) {
-	plock.RLock()
-	defer plock.RUnlock()
+	doRLock()
+	defer doRUnlock()
 	if p, ok := plist[strings.ToUpper(dbName+"."+procedureName)]; ok {
 		if a, ok := p.arguments[strings.ToUpper(argumentName)]; ok {
 			return a.dataType, a.dataTypeName, nil
@@ -60,7 +102,8 @@ func Describe(conn *oracle.Connection, dbName, procedureName string) error {
 		objectId       int32
 		shouldDescribe bool
 	)
-
+	bg := time.Now()
+	defer describeTotalTime.Add(time.Since(bg).Nanoseconds())
 	timestamp, packageName, err = ProcedureInfo(dbName, procedureName)
 
 	//ВСЕГДА проверяем были ли изменения и получаем размер массивов для информации по параметрам
@@ -145,8 +188,8 @@ func Describe(conn *oracle.Connection, dbName, procedureName string) error {
 				return errgo.Newf("Невозможно получить описание для \"%s\"\nОшибка: %s", procedureName, err.Error())
 			}
 
-			plock.Lock()
-			defer plock.Unlock()
+			doLock()
+			defer doUnlock()
 
 			p, ok := plist[strings.ToUpper(dbName+"."+procedureName)]
 			if !ok {

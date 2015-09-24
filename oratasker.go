@@ -200,10 +200,10 @@ func (r *oracleTasker) Run(sessionID, taskID, userName, userPass, connStr,
 	}
 
 	bg := time.Now()
-	var needDisconnect bool
+	//var needDisconnect bool
 	var res = OracleTaskResult{}
 	if err := r.connect(userName, userPass, connStr); err != nil {
-		res.StatusCode, res.Content, needDisconnect = packError(err)
+		res.StatusCode, res.Content /*needDisconnect*/, _ = packError(err)
 		// Формируем дамп до закрытия соединения, чтобы получить корректный запрос из последнего шага
 		r.dumpError(userName, connStr, dumpErrorFileName, err)
 
@@ -221,13 +221,17 @@ func (r *oracleTasker) Run(sessionID, taskID, userName, userPass, connStr,
 
 	if err := r.run(&res, paramStoreProc, beforeScript, afterScript, documentTable,
 		cgiEnv, procName, urlParams, reqFiles); err != nil {
-		res.StatusCode, res.Content, needDisconnect = packError(err)
+		res.StatusCode, res.Content /*needDisconnect*/, _ = packError(err)
 		// Формируем дамп до закрытия соединения, чтобы получить корректный запрос из последнего шага
 		r.dumpError(userName, connStr, dumpErrorFileName, err)
-		if needDisconnect {
-			//Если произошла ошибка, всегда закрываем соединение с БД
-			r.disconnect()
-		}
+
+		//Если произошла ошибка, всегда закрываем соединение с БД
+		r.disconnect()
+
+		//		if needDisconnect {
+		//			//Если произошла ошибка, всегда закрываем соединение с БД
+		//			r.disconnect()
+		//		}
 		res.Duration = int64(time.Since(bg) / time.Second)
 		func() {
 			r.mt.Lock()
@@ -280,27 +284,23 @@ func (r *oracleTasker) disconnect() (err error) {
 			r.openStep(stepDisconnectNum, "disconnect")
 			r.setStepInfo(stepDisconnectNum, "disconnect", "disconnect", false)
 
-			r.mt.Lock()
+			r.conn.Close()
 
-			defer func() {
-				r.conn = nil
-				r.connUserName = ""
-				r.connUserPass = ""
-				r.connStr = ""
-				r.sessID = ""
-				r.mt.Unlock()
-				r.setStepInfo(stepDisconnectNum, "disconnect", "disconnect", true)
-				r.closeStep(stepDisconnectNum)
+			r.setStepInfo(stepDisconnectNum, "disconnect", "disconnect", true)
+			r.closeStep(stepDisconnectNum)
 
-			}()
-
-			if r.conn != nil {
-				r.conn.Close()
-			}
 		} else {
 			// Очистка в случае неудачного Logon
 			r.conn.Free(true)
+
 		}
+		r.mt.Lock()
+		r.conn = nil
+		r.connUserName = ""
+		r.connUserPass = ""
+		r.connStr = ""
+		r.sessID = ""
+		r.mt.Unlock()
 	}
 	return nil
 }
@@ -1121,21 +1121,18 @@ func (r *oracleTasker) lastStms() (string, string) {
 func packError(err error) (int, []byte, bool) {
 	oraErr := UnMask(err)
 	if oraErr != nil {
-		switch {
-		case oraErr.Code == 28:
+		switch oraErr.Code {
+		case 28, 31:
 			return StatusRequestWasInterrupted, []byte(""), true
-		case oraErr.Code == 31:
-			return StatusRequestWasInterrupted, []byte(""), true
-		case oraErr.Code == 1017:
+		case 1017:
 			return StatusInvalidUsernameOrPassword, []byte(""), true
-		case oraErr.Code == 1031:
+		case 1031:
 			return StatusInsufficientPrivileges, []byte(""), true
-
-		case oraErr.Code == 28000:
+		case 28000:
 			return StatusAccountIsLocked, []byte(""), true
-		case oraErr.Code == 6564:
+		case 6564:
 			return http.StatusNotFound, []byte(""), false
-		case oraErr.Code == 3113:
+		case 3113, 3114:
 			return StatusErrorPage, []byte(errgo.Mask(err).Error()), true
 		default:
 			return StatusErrorPage, []byte(errgo.Mask(err).Error()), false
