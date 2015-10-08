@@ -1199,11 +1199,12 @@ func prepareParam(
 	case oNumber:
 		{
 			value := paramValue[0]
-			if lVar, err = cur.NewVariable(1, oracle.FloatVarType, 0); err != nil {
+			if lVar, err = cur.NewVariable(1, oracle.NumberAsStringVarType, 0); err != nil {
 				return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
 			}
-			lVar.SetValue(0, value)
-
+			if value != "" {
+				lVar.SetValue(0, value)
+			}
 			params[paramName] = lVar
 
 			// stmExecDeclarePart
