@@ -259,6 +259,7 @@ func (r *oracleTasker) connect(username, userpass, connstr string) (err error) {
 				// Если выходим с ошибкой, то в вызывающей процедуре будет вызван disconnect()
 				return err
 			}
+
 			r.connUserName = username
 			r.connUserPass = userpass
 			r.connStr = connstr

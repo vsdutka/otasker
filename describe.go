@@ -164,7 +164,8 @@ func Describe(conn *oracle.Connection, dbName, procedureName string) error {
 			"procedure_name": parsedProcNameVar,
 			"object_id":      objectIdVar,
 		}); err != nil {
-			return false, 0, errgo.Newf("Невозможно получить описание для \"%s\"\nОшибка: %s", procedureName, err.Error())
+			return false, 0, err
+			//return false, 0, errgo.Newf("Невозможно получить описание для \"%s\"\nОшибка: %s", procedureName, err.Error())
 		}
 
 		if updated == 1 {
@@ -181,11 +182,13 @@ func Describe(conn *oracle.Connection, dbName, procedureName string) error {
 			curLong := conn.NewCursor()
 			defer curLong.Close()
 			if err := curLong.Execute(stm_descr_long, []interface{}{objectId, parsedProcName}, nil); err != nil {
-				return errgo.Newf("Невозможно получить описание для \"%s\"\nОшибка: %s", procedureName, err.Error())
+				return err
+				//return errgo.Newf("Невозможно получить описание для \"%s\"\nОшибка: %s", procedureName, err.Error())
 			}
 			rows, err := curLong.FetchAll()
 			if err != nil {
-				return errgo.Newf("Невозможно получить описание для \"%s\"\nОшибка: %s", procedureName, err.Error())
+				return err
+				//return errgo.Newf("Невозможно получить описание для \"%s\"\nОшибка: %s", procedureName, err.Error())
 			}
 
 			doLock()
