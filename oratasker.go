@@ -489,6 +489,7 @@ func (r *oracleTasker) run(res *OracleTaskResult, paramStoreProc, beforeScript, 
 		extParamValueMaxLen int
 	)
 	for paramName, paramValue := range urlParams {
+		paramName = strings.Trim(paramName, " ")
 		paramType, paramTypeName, _ := ArgumentInfo(r.connStr, procName, paramName)
 
 		err = prepareParam(cur, sqlParams,
