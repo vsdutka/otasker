@@ -1081,20 +1081,22 @@ func killSession(stm, username, password, sid, sessionID string) error {
 func (r *oracleTasker) dumpError(userName, connStr, dumpErrorFileName string, err error) {
 	stm, stmShow := r.lastStms()
 	var buf bytes.Buffer
-	buf.WriteString(fmt.Sprintf("Имя пользователя : %s\n", userName))
-	buf.WriteString(fmt.Sprintf("Строка соединения : %s\n", connStr))
-	buf.WriteString(fmt.Sprintf("Дата и время возникновения : %s\n", time.Now().Format(time.RFC1123Z)))
-	buf.WriteString("******* Текст SQL  ********************************\n")
-	buf.WriteString(stm + "\n")
-	buf.WriteString("******* Текст SQL закончен ************************\n")
-	buf.WriteString("\n")
-	buf.WriteString("******* Текст ошибки  *****************************\n")
-	buf.WriteString(err.Error() + "\n")
-	buf.WriteString("******* Текст ошибки закончен *********************\n")
-	buf.WriteString("\n")
-	buf.WriteString("******* Текст SQL с параметрами *******************\n")
-	buf.WriteString(stmShow + "\n")
-	buf.WriteString("******* Текст SQL с параметрами закончен **********\n")
+	// BOM
+	buf.Write([]byte{0xEF, 0xBB, 0xBF})
+	buf.WriteString(fmt.Sprintf("Имя пользователя : %s\r\n", userName))
+	buf.WriteString(fmt.Sprintf("Строка соединения : %s\r\n", connStr))
+	buf.WriteString(fmt.Sprintf("Дата и время возникновения : %s\r\n", time.Now().Format(time.RFC1123Z)))
+	buf.WriteString("******* Текст SQL  ********************************\r\n")
+	buf.WriteString(strings.Replace(stm, "\n", "\r\n", -1) + "\r\n")
+	buf.WriteString("******* Текст SQL закончен ************************\r\n")
+	buf.WriteString("\r\n")
+	buf.WriteString("******* Текст ошибки  *****************************\r\n")
+	buf.WriteString(strings.Replace(err.Error(), "\n", "\r\n", -1) + "\r\n")
+	buf.WriteString("******* Текст ошибки закончен *********************\r\n")
+	buf.WriteString("\r\n")
+	buf.WriteString("******* Текст SQL с параметрами *******************\r\n")
+	buf.WriteString(strings.Replace(stmShow, "\n", "\r\n", -1) + "\r\n")
+	buf.WriteString("******* Текст SQL с параметрами закончен **********\r\n")
 	dir, _ := filepath.Split(dumpErrorFileName)
 	os.MkdirAll(dir, os.ModeDir)
 	ioutil.WriteFile(dumpErrorFileName, buf.Bytes(), 0644)
@@ -1164,6 +1166,7 @@ func prepareParam(
 	case oString:
 		{
 			value := paramValue[0]
+
 			if lVar, err = cur.NewVariable(0, oracle.StringVarType, uint(len(value))); err != nil {
 				return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
 			}
@@ -1172,7 +1175,12 @@ func prepareParam(
 			params[paramName] = lVar
 
 			// stmExecDeclarePart
-			stmShowDeclarePart.WriteString(fmt.Sprintf("  l_%s %s(%d);\n", paramName, paramTypeName, len(value)))
+			iLen := len(value)
+			if iLen == 0 {
+				// Для того, чтобы избежать ситуации VARCHAR2(0);
+				iLen = iLen + 1
+			}
+			stmShowDeclarePart.WriteString(fmt.Sprintf("  l_%s %s(%d);\n", paramName, paramTypeName, iLen))
 			//stmExecSetPart,
 			stmShowSetPart.WriteString(fmt.Sprintf("  l_%s := '%s';\n", paramName, strings.Replace(value, "'", "''", -1)))
 			// Вызов процедуры - Формирование строки с параметрами для вызова процедуры
