@@ -1200,8 +1200,8 @@ func prepareParam(
 				if lVar, err = cur.NewVar(&value); err != nil {
 					return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
 				}
-				params[paramName+"_s"] = lVar
-				stmExecStoreInContext.WriteString(fmt.Sprintf("  %s('%s', :%s_s);\n", paramStoreProc, paramName, paramName))
+				params[paramName+"#"] = lVar
+				stmExecStoreInContext.WriteString(fmt.Sprintf("  %s('%s', :%s#);\n", paramStoreProc, paramName, paramName))
 				stmShowStoreInContext.WriteString(fmt.Sprintf("  %s('%s', l_%s);\n", paramStoreProc, paramName, paramName))
 			}
 			return nil
@@ -1238,8 +1238,8 @@ func prepareParam(
 				if lVar, err = cur.NewVar(&value); err != nil {
 					return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
 				}
-				params[paramName+"_s"] = lVar
-				stmExecStoreInContext.WriteString(fmt.Sprintf("  %s('%s', :%s_s);\n", paramStoreProc, paramName, paramName))
+				params[paramName+"#"] = lVar
+				stmExecStoreInContext.WriteString(fmt.Sprintf("  %s('%s', :%s#);\n", paramStoreProc, paramName, paramName))
 				stmShowStoreInContext.WriteString(fmt.Sprintf("  %s('%s', l_%s);\n", paramStoreProc, paramName, paramName))
 			}
 			return nil
@@ -1273,8 +1273,8 @@ func prepareParam(
 				if lVar, err = cur.NewVar(&value); err != nil {
 					return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
 				}
-				params[paramName+"_s"] = lVar
-				stmExecStoreInContext.WriteString(fmt.Sprintf("  %s('%s', :%s_s);\n", paramStoreProc, paramName, paramName))
+				params[paramName+"#"] = lVar
+				stmExecStoreInContext.WriteString(fmt.Sprintf("  %s('%s', :%s#);\n", paramStoreProc, paramName, paramName))
 				stmShowStoreInContext.WriteString(fmt.Sprintf("  %s('%s', l_%s);\n", paramStoreProc, paramName, paramName))
 			}
 			return nil
@@ -1308,8 +1308,8 @@ func prepareParam(
 				if lVar, err = cur.NewVar(&value); err != nil {
 					return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
 				}
-				params[paramName+"_s"] = lVar
-				stmExecStoreInContext.WriteString(fmt.Sprintf("  %s('%s', :%s_s);\n", paramStoreProc, paramName, paramName))
+				params[paramName+"#"] = lVar
+				stmExecStoreInContext.WriteString(fmt.Sprintf("  %s('%s', :%s#);\n", paramStoreProc, paramName, paramName))
 				stmShowStoreInContext.WriteString(fmt.Sprintf("  %s('%s', l_%s);\n", paramStoreProc, paramName, paramName))
 			}
 			return nil
@@ -1386,10 +1386,10 @@ func prepareParam(
 						if lVar, err = cur.NewArrayVar(oracle.StringVarType, value, uint(valueMaxLen)); err != nil {
 							return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
 						}
-						params[paramName+"_s"] = lVar
+						params[paramName+"#"] = lVar
 
 						for i := range paramValue {
-							stmExecStoreInContext.WriteString(fmt.Sprintf("  %s('%s', :%s_s(%d));\n", paramStoreProc, paramName, paramName, i+1))
+							stmExecStoreInContext.WriteString(fmt.Sprintf("  %s('%s', :%s#(%d));\n", paramStoreProc, paramName, paramName, i+1))
 							stmShowStoreInContext.WriteString(fmt.Sprintf("  %s('%s', l_%s(%d));\n", paramStoreProc, paramName, paramName, i+1))
 						}
 					}
@@ -1423,10 +1423,10 @@ func prepareParam(
 						if lVar, err = cur.NewArrayVar(oracle.FloatVarType, value, uint(valueMaxLen)); err != nil {
 							return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
 						}
-						params[paramName+"_s"] = lVar
+						params[paramName+"#"] = lVar
 
 						for i := range paramValue {
-							stmExecStoreInContext.WriteString(fmt.Sprintf("  %s('%s', :%s_s(%d));\n", paramStoreProc, paramName, paramName, i+1))
+							stmExecStoreInContext.WriteString(fmt.Sprintf("  %s('%s', :%s#(%d));\n", paramStoreProc, paramName, paramName, i+1))
 							stmShowStoreInContext.WriteString(fmt.Sprintf("  %s('%s', l_%s(%d));\n", paramStoreProc, paramName, paramName, i+1))
 						}
 					}
@@ -1458,9 +1458,9 @@ func prepareParam(
 						if lVar, err = cur.NewArrayVar(oracle.Int32VarType, (value), 0); err != nil {
 							return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
 						}
-						params[paramName+"_s"] = lVar
+						params[paramName+"#"] = lVar
 						for i := range paramValue {
-							stmExecStoreInContext.WriteString(fmt.Sprintf("  %s('%s', :%s_s(%d));\n", paramStoreProc, paramName, paramName, i+1))
+							stmExecStoreInContext.WriteString(fmt.Sprintf("  %s('%s', :%s#(%d));\n", paramStoreProc, paramName, paramName, i+1))
 							stmShowStoreInContext.WriteString(fmt.Sprintf("  %s('%s', l_%s(%d));\n", paramStoreProc, paramName, paramName, i+1))
 						}
 					}
@@ -1498,9 +1498,9 @@ func prepareParam(
 						if lVar, err = cur.NewArrayVar(oracle.DateTimeVarType, (value), 0); err != nil {
 							return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
 						}
-						params[paramName+"_s"] = lVar
+						params[paramName+"#"] = lVar
 						for i := range paramValue {
-							stmExecStoreInContext.WriteString(fmt.Sprintf("  %s('%s', :%s_s(%d));\n", paramStoreProc, paramName, paramName, i+1))
+							stmExecStoreInContext.WriteString(fmt.Sprintf("  %s('%s', :%s#(%d));\n", paramStoreProc, paramName, paramName, i+1))
 							stmShowStoreInContext.WriteString(fmt.Sprintf("  %s('%s', l_%s(%d));\n", paramStoreProc, paramName, paramName, i+1))
 						}
 					}
@@ -1524,11 +1524,13 @@ func prepareParam(
 
 			// Добавление вызова сохранения параметра
 			if paramStoreProc != "" {
-				if lVar, err = cur.NewVar(&value); err != nil {
+				if lVar, err = cur.NewVariable(0, oracle.StringVarType, uint(len(value))); err != nil {
 					return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
 				}
-				params[paramName+"_s"] = lVar
-				stmExecStoreInContext.WriteString(fmt.Sprintf("  %s('%s', :%s_s);\n", paramStoreProc, paramName, paramName))
+				lVar.SetValue(0, value)
+
+				params[paramName+"#"] = lVar
+				stmExecStoreInContext.WriteString(fmt.Sprintf("  %s('%s', :%s#);\n", paramStoreProc, paramName, paramName))
 				stmShowStoreInContext.WriteString(fmt.Sprintf("  %s('%s', l_%s);\n", paramStoreProc, paramName, paramName))
 			}
 			return nil
