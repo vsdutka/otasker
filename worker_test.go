@@ -32,7 +32,7 @@ type test struct {
 func workerRun(t *testing.T, v test) {
 
 	if v.procCreate != "" {
-		err := exec(dsn, v.procCreate)
+		err := exec(*dsn, v.procCreate)
 		if err != nil {
 			t.Fatalf("%s - Error when run \"%s\": %s", v.name, v.procCreate, err.Error())
 		}
@@ -40,7 +40,7 @@ func workerRun(t *testing.T, v test) {
 	defer func() {
 		time.Sleep(v.afterTimeout)
 		if v.procDrop != "" {
-			err := exec(dsn, v.procDrop)
+			err := exec(*dsn, v.procDrop)
 			if err != nil {
 				t.Fatalf("%s - Error when run \"%s\": %s", v.name, v.procDrop, err.Error())
 			}
@@ -83,9 +83,9 @@ func TestWorkerRun(t *testing.T) {
 			path:      vpath,
 			sessionID: "sess1",
 			taskID:    "TASK1",
-			userName:  user,
-			userPass:  password,
-			connStr:   connstr,
+			userName:  dsn_user,
+			userPass:  dsn_passw,
+			connStr:   dsn_sid,
 			procName:  "TestWorkerRun",
 			procCreate: `
 create or replace procedure TestWorkerRun(ap in varchar2) is 
@@ -116,8 +116,8 @@ end;`,
 			sessionID: "sess2",
 			taskID:    "TASK2",
 			userName:  "user",
-			userPass:  password,
-			connStr:   connstr,
+			userPass:  dsn_passw,
+			connStr:   dsn_sid,
 			procName:  "TestWorkerRun",
 			procCreate: `
 		create or replace procedure TestWorkerRun(ap in varchar2) is
@@ -149,7 +149,7 @@ end;`,
 			taskID:     "TASK3",
 			userName:   "TEST001",
 			userPass:   "1",
-			connStr:    connstr,
+			connStr:    dsn_sid,
 			procName:   "a.root$.startup",
 			procCreate: "begin execute immediate 'create user \"TEST001\" identified by \"1\" account lock'; execute immediate 'grant connect to TEST001'; end;",
 			procDrop:   "drop user \"TEST001\"",
@@ -169,9 +169,9 @@ end;`,
 			path:      vpath,
 			sessionID: "sess4",
 			taskID:    "TASK4",
-			userName:  user,
-			userPass:  password,
-			connStr:   connstr,
+			userName:  dsn_user,
+			userPass:  dsn_passw,
+			connStr:   dsn_sid,
 			procName:  "TestWorkerRun",
 			procCreate: `
 create or replace procedure TestWorkerRun(ap in varchar2) is 
@@ -202,9 +202,9 @@ end;`,
 			path:       vpath,
 			sessionID:  "sess4",
 			taskID:     "TASK4",
-			userName:   user,
-			userPass:   password,
-			connStr:    connstr,
+			userName:   dsn_user,
+			userPass:   dsn_passw,
+			connStr:    dsn_sid,
 			procName:   "TestWorkerRun",
 			procCreate: ``,
 			procDrop:   ``,
@@ -224,9 +224,9 @@ end;`,
 			path:       vpath,
 			sessionID:  "sess5",
 			taskID:     "TASK5.1",
-			userName:   user,
-			userPass:   password,
-			connStr:    connstr,
+			userName:   dsn_user,
+			userPass:   dsn_passw,
+			connStr:    dsn_sid,
 			procName:   "TestWorkerRun",
 			procCreate: ``,
 			procDrop:   ``,
@@ -246,9 +246,9 @@ end;`,
 			path:       vpath,
 			sessionID:  "sess5",
 			taskID:     "TASK5.2",
-			userName:   user,
-			userPass:   password,
-			connStr:    connstr,
+			userName:   dsn_user,
+			userPass:   dsn_passw,
+			connStr:    dsn_sid,
 			procName:   "TestWorkerRun",
 			procCreate: ``,
 			procDrop:   `drop procedure TestWorkerRun`,
@@ -268,9 +268,9 @@ end;`,
 			path:       vpath,
 			sessionID:  "sess5",
 			taskID:     "TASK5.1",
-			userName:   user,
-			userPass:   password,
-			connStr:    connstr,
+			userName:   dsn_user,
+			userPass:   dsn_passw,
+			connStr:    dsn_sid,
 			procName:   "TestWorkerRun",
 			procCreate: ``,
 			procDrop:   ``,
@@ -311,9 +311,9 @@ func TestWorkerBreak(t *testing.T) {
 			path:      vpath,
 			sessionID: "sess6",
 			taskID:    "TASK6",
-			userName:  user,
-			userPass:  password,
-			connStr:   connstr,
+			userName:  dsn_user,
+			userPass:  dsn_passw,
+			connStr:   dsn_sid,
 			procName:  "TestWorkerRun",
 			procCreate: `
 create or replace procedure TestWorkerRun(ap in varchar2) is 

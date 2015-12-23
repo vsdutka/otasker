@@ -16,9 +16,9 @@ func prepareData(t *testing.T, vpath string) {
 			path:      vpath,
 			sessionID: fmt.Sprintf("sess%03d", 10-i),
 			taskID:    fmt.Sprintf("TASK%03d", i),
-			userName:  user,
-			userPass:  password,
-			connStr:   connstr,
+			userName:  dsn_user,
+			userPass:  dsn_passw,
+			connStr:   dsn_sid,
 			procName:  fmt.Sprintf(`TestWorkerRun%d`, i),
 			procCreate: fmt.Sprintf(`
 create or replace procedure TestWorkerRun%d(ap in varchar2) is 
