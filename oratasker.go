@@ -4,6 +4,9 @@ package otasker
 import (
 	"bytes"
 	"fmt"
+	"golang.org/x/net/html/charset"
+	"golang.org/x/text/encoding"
+	"golang.org/x/text/transform"
 	"gopkg.in/errgo.v1"
 	"gopkg.in/goracle.v1/oracle"
 	"io/ioutil"
@@ -30,7 +33,7 @@ const (
 type OracleTaskResult struct {
 	StatusCode  int
 	ContentType string
-	Headers     string
+	Headers     map[string]string
 	Content     []byte
 	Duration    int64
 }
@@ -552,8 +555,9 @@ func (r *oracleTasker) run(res *OracleTaskResult, paramStoreProc, beforeScript, 
 	stmShowSetPart.WriteString(fmt.Sprintf("  l_num_ext_params := %d;\n", int32(len(extParamName))))
 	for key, val := range extParamName {
 		//FIXME Заменить текстовую константу на использование bind-переменной
-		stmExecSetPart.WriteString(fmt.Sprintf("  l_ext_param_name(%d) := '%s';\n", key+1, val))
-		stmShowSetPart.WriteString(fmt.Sprintf("  l_ext_param_name(%d) := '%s';\n", key+1, val))
+		s, _ := val.(string)
+		stmExecSetPart.WriteString(fmt.Sprintf("  l_ext_param_name(%d) := '%s';\n", key+1, strings.ToUpper(s)))
+		stmShowSetPart.WriteString(fmt.Sprintf("  l_ext_param_name(%d) := '%s';\n", key+1, strings.ToUpper(s)))
 	}
 
 	for key, val := range extParamValue {
@@ -632,24 +636,41 @@ func (r *oracleTasker) run(res *OracleTaskResult, paramStoreProc, beforeScript, 
 	}
 	// Поскольку буфер ВСЕГДА формируем в UTF-8,
 	// нужно изменить значение Charset в ContentType
-	contentType := "text/html"
+	//	contentType := "text/html"
+	//	if ct != nil {
+	//		contentType = ct.(string)
+	//	}
+	//	res.ContentType = contentType
+
+	//contentType := "text/html"
+	contentType := ""
 	if ct != nil {
 		contentType = ct.(string)
 	}
-	res.ContentType = contentType
 
 	ch, err := CustomHeadersVar.GetValue(0)
 	if err != nil {
 		return err
 	}
 	if ch != nil {
-		res.Headers = ch.(string)
+		res.Headers = parseHeaders(ch.(string))
 	}
+	//ContentType передается через дополнительные заголовки - ЕКБ
+	for k, v := range res.Headers {
+		if strings.ToLower(k) == "content-type" {
+			contentType = v
+			delete(res.Headers, k)
+		}
+	}
+
+	fixedContentType, fixedFlag := fixContentType(contentType)
+	res.ContentType = fixedContentType
 
 	rc, err := rcVar.GetValue(0)
 	if err != nil {
 		return err
 	}
+
 	switch rc.(int32) {
 	case 0:
 		{
@@ -687,17 +708,28 @@ func (r *oracleTasker) run(res *OracleTaskResult, paramStoreProc, beforeScript, 
 					fmt.Println("size error: ", err)
 				}
 				if size != 0 {
-					buf, err := ext.ReadAll()
+					//Было так
+					res.Content, err = ext.ReadAll()
 					if err != nil {
 						return err
 					}
-					res.Content = append(res.Content, buf...)
+
+					//Костыль
+					if fixedFlag {
+						if e, _ := charset.Lookup("windows-1251"); e != encoding.Nop {
+							res.Content, err = ioutil.ReadAll(transform.NewReader(bytes.NewReader(res.Content), e.NewDecoder()))
+							if err != nil {
+								return err
+							}
+						}
+					}
 				}
 			}
 
 		}
 	}
-
+	//FIXME - Убрать костыль после того. как принудительная установка будет удалена из кода на PL/SQL
+	res.Content = fixMeta(res.Content)
 	r.setStepInfo(stepRunNum, stepStm, stepStmForShowing, true)
 	return nil
 }
@@ -1201,8 +1233,8 @@ func prepareParam(
 					return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
 				}
 				params[paramName+"#"] = lVar
-				stmExecStoreInContext.WriteString(fmt.Sprintf("  %s('%s', :%s#);\n", paramStoreProc, paramName, paramName))
-				stmShowStoreInContext.WriteString(fmt.Sprintf("  %s('%s', l_%s);\n", paramStoreProc, paramName, paramName))
+				stmExecStoreInContext.WriteString(fmt.Sprintf("  %s('%s', :%s#);\n", paramStoreProc, strings.ToUpper(paramName), paramName))
+				stmShowStoreInContext.WriteString(fmt.Sprintf("  %s('%s', l_%s);\n", paramStoreProc, strings.ToUpper(paramName), paramName))
 			}
 			return nil
 		}
@@ -1239,8 +1271,8 @@ func prepareParam(
 					return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
 				}
 				params[paramName+"#"] = lVar
-				stmExecStoreInContext.WriteString(fmt.Sprintf("  %s('%s', :%s#);\n", paramStoreProc, paramName, paramName))
-				stmShowStoreInContext.WriteString(fmt.Sprintf("  %s('%s', l_%s);\n", paramStoreProc, paramName, paramName))
+				stmExecStoreInContext.WriteString(fmt.Sprintf("  %s('%s', :%s#);\n", paramStoreProc, strings.ToUpper(paramName), paramName))
+				stmShowStoreInContext.WriteString(fmt.Sprintf("  %s('%s', l_%s);\n", paramStoreProc, strings.ToUpper(paramName), paramName))
 			}
 			return nil
 		}
@@ -1274,8 +1306,8 @@ func prepareParam(
 					return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
 				}
 				params[paramName+"#"] = lVar
-				stmExecStoreInContext.WriteString(fmt.Sprintf("  %s('%s', :%s#);\n", paramStoreProc, paramName, paramName))
-				stmShowStoreInContext.WriteString(fmt.Sprintf("  %s('%s', l_%s);\n", paramStoreProc, paramName, paramName))
+				stmExecStoreInContext.WriteString(fmt.Sprintf("  %s('%s', :%s#);\n", paramStoreProc, strings.ToUpper(paramName), paramName))
+				stmShowStoreInContext.WriteString(fmt.Sprintf("  %s('%s', l_%s);\n", paramStoreProc, strings.ToUpper(paramName), paramName))
 			}
 			return nil
 		}
@@ -1309,8 +1341,8 @@ func prepareParam(
 					return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
 				}
 				params[paramName+"#"] = lVar
-				stmExecStoreInContext.WriteString(fmt.Sprintf("  %s('%s', :%s#);\n", paramStoreProc, paramName, paramName))
-				stmShowStoreInContext.WriteString(fmt.Sprintf("  %s('%s', l_%s);\n", paramStoreProc, paramName, paramName))
+				stmExecStoreInContext.WriteString(fmt.Sprintf("  %s('%s', :%s#);\n", paramStoreProc, strings.ToUpper(paramName), paramName))
+				stmShowStoreInContext.WriteString(fmt.Sprintf("  %s('%s', l_%s);\n", paramStoreProc, strings.ToUpper(paramName), paramName))
 			}
 			return nil
 		}
@@ -1341,8 +1373,8 @@ func prepareParam(
 
 			// Добавление вызова сохранения параметра
 			if paramStoreProc != "" {
-				stmExecStoreInContext.WriteString(fmt.Sprintf("  %s('%s', '%s');\n", paramStoreProc, paramName, value))
-				stmShowStoreInContext.WriteString(fmt.Sprintf("  %s('%s', '%s');\n", paramStoreProc, paramName, value))
+				stmExecStoreInContext.WriteString(fmt.Sprintf("  %s('%s', '%s');\n", paramStoreProc, strings.ToUpper(paramName), value))
+				stmShowStoreInContext.WriteString(fmt.Sprintf("  %s('%s', '%s');\n", paramStoreProc, strings.ToUpper(paramName), value))
 			}
 			return nil
 		}
@@ -1389,8 +1421,8 @@ func prepareParam(
 						params[paramName+"#"] = lVar
 
 						for i := range paramValue {
-							stmExecStoreInContext.WriteString(fmt.Sprintf("  %s('%s', :%s#(%d));\n", paramStoreProc, paramName, paramName, i+1))
-							stmShowStoreInContext.WriteString(fmt.Sprintf("  %s('%s', l_%s(%d));\n", paramStoreProc, paramName, paramName, i+1))
+							stmExecStoreInContext.WriteString(fmt.Sprintf("  %s('%s', :%s#(%d));\n", paramStoreProc, strings.ToUpper(paramName), paramName, i+1))
+							stmShowStoreInContext.WriteString(fmt.Sprintf("  %s('%s', l_%s(%d));\n", paramStoreProc, strings.ToUpper(paramName), paramName, i+1))
 						}
 					}
 
@@ -1426,8 +1458,8 @@ func prepareParam(
 						params[paramName+"#"] = lVar
 
 						for i := range paramValue {
-							stmExecStoreInContext.WriteString(fmt.Sprintf("  %s('%s', :%s#(%d));\n", paramStoreProc, paramName, paramName, i+1))
-							stmShowStoreInContext.WriteString(fmt.Sprintf("  %s('%s', l_%s(%d));\n", paramStoreProc, paramName, paramName, i+1))
+							stmExecStoreInContext.WriteString(fmt.Sprintf("  %s('%s', :%s#(%d));\n", paramStoreProc, strings.ToUpper(paramName), paramName, i+1))
+							stmShowStoreInContext.WriteString(fmt.Sprintf("  %s('%s', l_%s(%d));\n", paramStoreProc, strings.ToUpper(paramName), paramName, i+1))
 						}
 					}
 				}
@@ -1460,8 +1492,8 @@ func prepareParam(
 						}
 						params[paramName+"#"] = lVar
 						for i := range paramValue {
-							stmExecStoreInContext.WriteString(fmt.Sprintf("  %s('%s', :%s#(%d));\n", paramStoreProc, paramName, paramName, i+1))
-							stmShowStoreInContext.WriteString(fmt.Sprintf("  %s('%s', l_%s(%d));\n", paramStoreProc, paramName, paramName, i+1))
+							stmExecStoreInContext.WriteString(fmt.Sprintf("  %s('%s', :%s#(%d));\n", paramStoreProc, strings.ToUpper(paramName), paramName, i+1))
+							stmShowStoreInContext.WriteString(fmt.Sprintf("  %s('%s', l_%s(%d));\n", paramStoreProc, strings.ToUpper(paramName), paramName, i+1))
 						}
 					}
 				}
@@ -1500,8 +1532,8 @@ func prepareParam(
 						}
 						params[paramName+"#"] = lVar
 						for i := range paramValue {
-							stmExecStoreInContext.WriteString(fmt.Sprintf("  %s('%s', :%s#(%d));\n", paramStoreProc, paramName, paramName, i+1))
-							stmShowStoreInContext.WriteString(fmt.Sprintf("  %s('%s', l_%s(%d));\n", paramStoreProc, paramName, paramName, i+1))
+							stmExecStoreInContext.WriteString(fmt.Sprintf("  %s('%s', :%s#(%d));\n", paramStoreProc, strings.ToUpper(paramName), paramName, i+1))
+							stmShowStoreInContext.WriteString(fmt.Sprintf("  %s('%s', l_%s(%d));\n", paramStoreProc, strings.ToUpper(paramName), paramName, i+1))
 						}
 					}
 				}
@@ -1530,8 +1562,8 @@ func prepareParam(
 				lVar.SetValue(0, value)
 
 				params[paramName+"#"] = lVar
-				stmExecStoreInContext.WriteString(fmt.Sprintf("  %s('%s', :%s#);\n", paramStoreProc, paramName, paramName))
-				stmShowStoreInContext.WriteString(fmt.Sprintf("  %s('%s', l_%s);\n", paramStoreProc, paramName, paramName))
+				stmExecStoreInContext.WriteString(fmt.Sprintf("  %s('%s', :%s#);\n", paramStoreProc, strings.ToUpper(paramName), paramName))
+				stmShowStoreInContext.WriteString(fmt.Sprintf("  %s('%s', l_%s);\n", paramStoreProc, strings.ToUpper(paramName), paramName))
 			}
 			return nil
 		}
