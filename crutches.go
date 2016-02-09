@@ -16,7 +16,7 @@ func fixMeta(content []byte) []byte {
 	return buf
 }
 
-func fixContentType(contentType string) (string, bool) {
+func fixContentType(contentType string) (string, string, bool) {
 	mt, prms, err := mime.ParseMediaType(contentType)
 	if err == nil {
 		if strings.HasPrefix(mt, "text") ||
@@ -24,11 +24,12 @@ func fixContentType(contentType string) (string, bool) {
 			strings.HasPrefix(mt, "application/x-sql") ||
 			strings.HasPrefix(mt, "application/json") ||
 			strings.HasPrefix(mt, "application/javascript") {
+			charset, _ := prms["charset"]
 			prms["charset"] = "utf-8"
-			return mime.FormatMediaType(mt, prms), true
+			return mime.FormatMediaType(mt, prms), charset, true
 		}
 	}
-	return contentType, false
+	return contentType, "", false
 }
 
 func parseHeaders(headers string) map[string]string {

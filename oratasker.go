@@ -634,15 +634,7 @@ func (r *oracleTasker) run(res *OracleTaskResult, paramStoreProc, beforeScript, 
 	if err != nil {
 		return err
 	}
-	// Поскольку буфер ВСЕГДА формируем в UTF-8,
-	// нужно изменить значение Charset в ContentType
-	//	contentType := "text/html"
-	//	if ct != nil {
-	//		contentType = ct.(string)
-	//	}
-	//	res.ContentType = contentType
 
-	//contentType := "text/html"
 	contentType := ""
 	if ct != nil {
 		contentType = ct.(string)
@@ -663,7 +655,7 @@ func (r *oracleTasker) run(res *OracleTaskResult, paramStoreProc, beforeScript, 
 		}
 	}
 
-	fixedContentType, fixedFlag := fixContentType(contentType)
+	fixedContentType, origCharset, fixedFlag := fixContentType(contentType)
 	res.ContentType = fixedContentType
 
 	rc, err := rcVar.GetValue(0)
@@ -716,7 +708,11 @@ func (r *oracleTasker) run(res *OracleTaskResult, paramStoreProc, beforeScript, 
 
 					//Костыль
 					if fixedFlag {
-						if e, _ := charset.Lookup("windows-1251"); e != encoding.Nop {
+						//Для случая, когда требуется перекодировка
+						if origCharset == "" {
+							origCharset = "windows-1251"
+						}
+						if e, _ := charset.Lookup(origCharset); e != encoding.Nop {
 							res.Content, err = ioutil.ReadAll(transform.NewReader(bytes.NewReader(res.Content), e.NewDecoder()))
 							if err != nil {
 								return err
