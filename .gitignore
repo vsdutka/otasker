@@ -55,3 +55,5 @@ sql_tests/gen_test_data.tst
 *.~prc
 *.rar
 otasker.test.exe~
+*.r
+nm.txt

@@ -4,9 +4,9 @@ package otasker
 import (
 	"bytes"
 	"fmt"
-	"golang.org/x/net/html/charset"
-	"golang.org/x/text/encoding"
-	"golang.org/x/text/transform"
+	//	"golang.org/x/net/html/charset"
+	//	"golang.org/x/text/encoding"
+	//	"golang.org/x/text/transform"
 	"gopkg.in/errgo.v1"
 	"gopkg.in/goracle.v1/oracle"
 	"io/ioutil"
@@ -647,6 +647,7 @@ func (r *oracleTasker) run(res *OracleTaskResult, paramStoreProc, beforeScript, 
 	if ch != nil {
 		res.Headers = parseHeaders(ch.(string))
 	}
+
 	//ContentType передается через дополнительные заголовки - ЕКБ
 	for k, v := range res.Headers {
 		if strings.ToLower(k) == "content-type" {
@@ -655,8 +656,7 @@ func (r *oracleTasker) run(res *OracleTaskResult, paramStoreProc, beforeScript, 
 		}
 	}
 
-	fixedContentType, origCharset, fixedFlag := fixContentType(contentType)
-	res.ContentType = fixedContentType
+	res.ContentType = contentType
 
 	rc, err := rcVar.GetValue(0)
 	if err != nil {
@@ -683,6 +683,11 @@ func (r *oracleTasker) run(res *OracleTaskResult, paramStoreProc, beforeScript, 
 			if bNextChunkExists.(int32) != 0 {
 				r.getRestChunks(res)
 			}
+			//FIXME - Убрать костыль после того. как принудительная установка будет удалена из кода на PL/SQL
+			//В коде на PL/SQL встречаются места, где принудительно устанавливается charset.
+			//Поскольку библиотека получает данные в UTF-8, приходиться менять/удалять charset как в заголовках, так и в теле ответа
+			res.ContentType, _, _ = fixContentType(contentType)
+			res.Content = fixMeta(res.Content)
 		}
 	case 1:
 		{
@@ -705,27 +710,32 @@ func (r *oracleTasker) run(res *OracleTaskResult, paramStoreProc, beforeScript, 
 					if err != nil {
 						return err
 					}
-
-					//Костыль
-					if fixedFlag {
-						//Для случая, когда требуется перекодировка
-						if origCharset == "" {
-							origCharset = "windows-1251"
-						}
-						if e, _ := charset.Lookup(origCharset); e != encoding.Nop {
-							res.Content, err = ioutil.ReadAll(transform.NewReader(bytes.NewReader(res.Content), e.NewDecoder()))
-							if err != nil {
-								return err
-							}
-						}
+					if res.ContentType == "" {
+						res.ContentType = http.DetectContentType(res.Content)
 					}
+
+					//					//Костыль
+					//					if fixedFlag {
+					//						//Для случая, когда требуется перекодировка
+					//						if origCharset == "" {
+					//							origCharset = "windows-1251"
+					//						}
+
+					//						fmt.Println("origCharset = ", origCharset)
+
+					//						if e, _ := charset.Lookup(origCharset); e != encoding.Nop {
+					//							res.Content, err = ioutil.ReadAll(transform.NewReader(bytes.NewReader(res.Content), e.NewDecoder()))
+					//							if err != nil {
+					//								return err
+					//							}
+					//						}
+					//					}
 				}
 			}
 
 		}
 	}
-	//FIXME - Убрать костыль после того. как принудительная установка будет удалена из кода на PL/SQL
-	res.Content = fixMeta(res.Content)
+
 	r.setStepInfo(stepRunNum, stepStm, stepStmForShowing, true)
 	return nil
 }
@@ -1193,7 +1203,7 @@ func prepareParam(
 	switch paramType {
 	case oString:
 		{
-			value := paramValue[0]
+			value := trimRightCRLF(paramValue[0])
 
 			if lVar, err = cur.NewVariable(0, oracle.StringVarType, uint(len(value))); err != nil {
 				return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
@@ -1236,7 +1246,7 @@ func prepareParam(
 		}
 	case oNumber:
 		{
-			value := paramValue[0]
+			value := trimRightCRLF(paramValue[0])
 			if lVar, err = cur.NewVariable(1, oracle.NumberAsStringVarType, 0); err != nil {
 				return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
 			}
@@ -1274,7 +1284,7 @@ func prepareParam(
 		}
 	case oInteger:
 		{
-			value := paramValue[0]
+			value := trimRightCRLF(paramValue[0])
 			if lVar, err = cur.NewVar(&value); err != nil {
 				return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
 			}
@@ -1310,7 +1320,7 @@ func prepareParam(
 
 	case oDate:
 		{
-			value := paramValue[0]
+			value := trimRightCRLF(paramValue[0])
 			if lVar, err = cur.NewVar(&value); err != nil {
 				return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
 			}
@@ -1344,7 +1354,7 @@ func prepareParam(
 		}
 	case oBoolean:
 		{
-			value := strings.ToLower(paramValue[0])
+			value := strings.ToLower(trimRightCRLF(paramValue[0]))
 			if lVar, err = cur.NewVariable(0, oracle.StringVarType, uint(len(value))); err != nil {
 				return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
 			}
@@ -1379,6 +1389,7 @@ func prepareParam(
 			value := make([]interface{}, len(paramValue))
 			valueMaxLen := 0
 			for i, val := range paramValue {
+				val := trimRightCRLF(val)
 				value[i] = val
 				if len(val) > valueMaxLen {
 					valueMaxLen = len(val)
@@ -1396,7 +1407,7 @@ func prepareParam(
 					stmShowDeclarePart.WriteString(fmt.Sprintf("  l_%s %s;\n", paramName, paramTypeName))
 					//stmExecSetPart,
 					for i := range paramValue {
-						stmShowSetPart.WriteString(fmt.Sprintf("  l_%s(%d) := '%s';\n", paramName, i+1, strings.Replace(paramValue[i], "'", "''", -1)))
+						stmShowSetPart.WriteString(fmt.Sprintf("  l_%s(%d) := '%s';\n", paramName, i+1, strings.Replace(trimRightCRLF(paramValue[i]), "'", "''", -1)))
 					}
 					// Вызов процедуры - Формирование строки с параметрами для вызова процедуры
 					if stmExecProcParams.Len() != 0 {
@@ -1433,7 +1444,7 @@ func prepareParam(
 					stmShowDeclarePart.WriteString(fmt.Sprintf("  l_%s %s;\n", paramName, paramTypeName))
 					//stmExecSetPart,
 					for i := range paramValue {
-						stmShowSetPart.WriteString(fmt.Sprintf("  l_%s(%d) := %s;\n", paramName, i+1, paramValue[i]))
+						stmShowSetPart.WriteString(fmt.Sprintf("  l_%s(%d) := %s;\n", paramName, i+1, trimRightCRLF(paramValue[i])))
 					}
 					// Вызов процедуры - Формирование строки с параметрами для вызова процедуры
 					if stmExecProcParams.Len() != 0 {
@@ -1469,7 +1480,7 @@ func prepareParam(
 					stmShowDeclarePart.WriteString(fmt.Sprintf("  l_%s %s;\n", paramName, paramTypeName))
 					//stmExecSetPart,
 					for i := range paramValue {
-						stmShowSetPart.WriteString(fmt.Sprintf("  l_%s(%d) := %s;\n", paramName, i+1, paramValue[i]))
+						stmShowSetPart.WriteString(fmt.Sprintf("  l_%s(%d) := %s;\n", paramName, i+1, trimRightCRLF(paramValue[i])))
 					}
 					// Вызов процедуры - Формирование строки с параметрами для вызова процедуры
 					if stmExecProcParams.Len() != 0 {
@@ -1497,7 +1508,7 @@ func prepareParam(
 				{
 					valueTime := make([]interface{}, len(paramValue))
 					for i, val := range paramValue {
-						valueTime[i], _ = time.Parse(time.RFC3339, val)
+						valueTime[i], _ = time.Parse(time.RFC3339, trimRightCRLF(val))
 
 					}
 					if lVar, err = cur.NewArrayVar(oracle.DateTimeVarType, valueTime, 0); err != nil {
@@ -1509,7 +1520,7 @@ func prepareParam(
 					stmShowDeclarePart.WriteString(fmt.Sprintf("  l_%s %s;\n", paramName, paramTypeName))
 					//stmExecSetPart,
 					for i := range paramValue {
-						stmShowSetPart.WriteString(fmt.Sprintf("  l_%s(%d) := to_date('%s');\n", paramName, i+1, paramValue[i]))
+						stmShowSetPart.WriteString(fmt.Sprintf("  l_%s(%d) := to_date('%s');\n", paramName, i+1, trimRightCRLF(paramValue[i])))
 					}
 					// Вызов процедуры - Формирование строки с параметрами для вызова процедуры
 					if stmExecProcParams.Len() != 0 {
@@ -1544,7 +1555,7 @@ func prepareParam(
 		{
 			//Параметры, отсутствующие в списке параметров процедуры.
 			//Сохраняются только в контексте
-			value := paramValue[0]
+			value := trimRightCRLF(paramValue[0])
 			// stmExecDeclarePart
 			stmShowDeclarePart.WriteString(fmt.Sprintf("  l_%s varchar2(32767);\n", paramName))
 			//stmExecSetPart,
@@ -1564,7 +1575,6 @@ func prepareParam(
 			return nil
 		}
 	}
-	return nil
 }
 
 func UnMask(err error) *oracle.Error {
@@ -1588,3 +1598,7 @@ func ExtractFileName(contentDisposition string) string {
 	}
 	return r
 }
+
+var crlf = string([]byte{13, 10})
+
+func trimRightCRLF(val string) string { return strings.TrimRight(val, crlf) }

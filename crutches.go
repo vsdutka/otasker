@@ -32,6 +32,16 @@ func fixContentType(contentType string) (string, string, bool) {
 	return contentType, "", false
 }
 
+func encodeFilename(afilename string) string {
+	if strings.HasPrefix(afilename, "=?utf-8?") {
+		return afilename
+	}
+	if s, err := url.QueryUnescape(afilename); err == nil {
+		return url.QueryEscape(s)
+	}
+	return url.QueryEscape(afilename)
+}
+
 func parseHeaders(headers string) map[string]string {
 	fixedHeaders := make(map[string]string)
 
@@ -53,7 +63,7 @@ func parseHeaders(headers string) map[string]string {
 						newVal := ""
 						for _, partValue := range strings.Split(headerValue, "; ") {
 							if strings.HasPrefix(partValue, "filename=") {
-								newVal += "filename=\"" + url.QueryEscape(strings.Replace(strings.Replace(partValue, "filename=", "", -1), "\"", "", -1)) + "\";"
+								newVal += "filename=\"" + encodeFilename(strings.Replace(strings.Replace(partValue, "filename=", "", -1), "\"", "", -1)) + "\";"
 							} else {
 								newVal += partValue + ";"
 							}
