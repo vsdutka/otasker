@@ -7,8 +7,6 @@ import (
 	//	"golang.org/x/net/html/charset"
 	//	"golang.org/x/text/encoding"
 	//	"golang.org/x/text/transform"
-	"gopkg.in/errgo.v1"
-	"gopkg.in/goracle.v1/oracle"
 	"io/ioutil"
 	"net/http"
 	"net/url"
@@ -18,6 +16,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"gopkg.in/errgo.v1"
+	"gopkg.in/goracle.v1/oracle"
 )
 
 const (
@@ -242,6 +243,8 @@ func (r *oracleTasker) Run(sessionID, taskID, userName, userPass, connStr,
 			r.logErrorsNum++
 		}()
 		return res
+		//	} else {
+		//		r.dumpError("!!!"+userName, connStr, dumpErrorFileName, errgo.New("TEST"))
 	}
 	res.StatusCode = http.StatusOK
 	res.Duration = int64(time.Since(bg) / time.Second)
@@ -421,14 +424,20 @@ func (r *oracleTasker) run(res *OracleTaskResult, paramStoreProc, beforeScript, 
 
 	stmShowSetPart.WriteString(fmt.Sprintf("  l_num_params := %d;\n", numParams))
 
-	i := uint(0)
-	for key, val := range cgiEnv {
-		paramNameVar.SetValue(i, key)
-		paramValVar.SetValue(i, val)
+	var cgiEnvKeys []string
+	for key := range cgiEnv {
+		cgiEnvKeys = append(cgiEnvKeys, key)
+	}
+	sort.Strings(cgiEnvKeys)
 
-		stmShowSetPart.WriteString(fmt.Sprintf("  l_param_name(%d) := '%s';\n", i+1, key))
-		stmShowSetPart.WriteString(fmt.Sprintf("  l_param_val(%d) := '%s';\n", i+1, val))
-		i++
+	//i := uint(0)
+	for key := range cgiEnvKeys {
+		paramNameVar.SetValue(uint(key), cgiEnvKeys[key])
+		paramValVar.SetValue(uint(key), cgiEnv[cgiEnvKeys[key]])
+
+		stmShowSetPart.WriteString(fmt.Sprintf("  l_param_name(%d) := '%s';\n", key+1, cgiEnvKeys[key]))
+		stmShowSetPart.WriteString(fmt.Sprintf("  l_param_val(%d) := '%s';\n", key+1, cgiEnv[cgiEnvKeys[key]]))
+		//i++
 	}
 
 	if ContentTypeVar, err = cur.NewVariable(0, oracle.StringVarType, 1024); err != nil {
@@ -734,6 +743,9 @@ func (r *oracleTasker) run(res *OracleTaskResult, paramStoreProc, beforeScript, 
 			}
 
 		}
+	}
+	if res.ContentType == "" /*&& (len(res.Content) > 0)*/ {
+		res.ContentType = "text/html"
 	}
 
 	r.setStepInfo(stepRunNum, stepStm, stepStmForShowing, true)
