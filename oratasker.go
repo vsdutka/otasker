@@ -16,9 +16,12 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"gopkg.in/errgo.v1"
 	"gopkg.in/goracle.v1/oracle"
+
+	//	"golang.org/x/text/encoding/charmap"
 )
 
 const (
@@ -500,33 +503,38 @@ func (r *oracleTasker) run(res *OracleTaskResult, paramStoreProc, beforeScript, 
 		extParamNameMaxLen  int
 		extParamValueMaxLen int
 	)
+
+	//fmt.Println("urlParams = ", urlParams)
+
 	for paramName, paramValue := range urlParams {
 		paramName = strings.Trim(paramName, " ")
-		paramType, paramTypeName, _ := ArgumentInfo(r.connStr, procName, paramName)
 
-		err = prepareParam(cur, sqlParams,
-			paramName, paramValue,
-			paramType, paramTypeName,
-			paramStoreProc,
-			&stmExecDeclarePart, &stmShowDeclarePart,
-			&stmExecSetPart, &stmShowSetPart,
-			&stmExecProcParams, &stmShowProcParams,
-			&stmExecStoreInContext, &stmShowStoreInContext)
-		if err != nil {
-			return err
+		if paramName != "" {
+			paramType, paramTypeName, _ := ArgumentInfo(r.connStr, procName, paramName)
+
+			err = prepareParam(cur, sqlParams,
+				paramName, paramValue,
+				paramType, paramTypeName,
+				paramStoreProc,
+				&stmExecDeclarePart, &stmShowDeclarePart,
+				&stmExecSetPart, &stmShowSetPart,
+				&stmExecProcParams, &stmShowProcParams,
+				&stmExecStoreInContext, &stmShowStoreInContext)
+			if err != nil {
+				return err
+			}
+
+			extParamName = append(extParamName, paramName)
+			extParamValue = append(extParamValue, paramValue[0])
+
+			if len(paramName) > extParamNameMaxLen {
+				extParamNameMaxLen = len(paramName)
+			}
+
+			if len(paramValue[0]) > extParamValueMaxLen {
+				extParamValueMaxLen = len(paramValue[0])
+			}
 		}
-
-		extParamName = append(extParamName, paramName)
-		extParamValue = append(extParamValue, paramValue[0])
-
-		if len(paramName) > extParamNameMaxLen {
-			extParamNameMaxLen = len(paramName)
-		}
-
-		if len(paramValue[0]) > extParamValueMaxLen {
-			extParamValueMaxLen = len(paramValue[0])
-		}
-
 	}
 
 	if reqFiles != nil {
@@ -537,6 +545,10 @@ func (r *oracleTasker) run(res *OracleTaskResult, paramStoreProc, beforeScript, 
 				return err
 			}
 			paramType, paramTypeName, _ := ArgumentInfo(r.connStr, procName, paramName)
+
+			fmt.Println("fileName = ", fileName)
+			fmt.Println("paramType = ", paramType)
+			fmt.Println("paramTypeName = ", paramTypeName)
 
 			err = prepareParam(cur, sqlParams,
 				paramName, fileName,
@@ -684,7 +696,7 @@ func (r *oracleTasker) run(res *OracleTaskResult, paramStoreProc, beforeScript, 
 				return nil
 			}
 			// Oracle возвращает данные ВСЕГДА в UTF-8
-			res.Content = append(res.Content, []byte(data.(string))...)
+			res.Content = append(res.Content, []byte(addCR(data.(string)))...)
 			bNextChunkExists, err := bNextChunkExistsVar.GetValue(0)
 			if err != nil {
 				return err
@@ -821,7 +833,7 @@ func (r *oracleTasker) getRestChunks(res *OracleTaskResult) error {
 			return err
 		}
 		// Oracle возвращает данные ВСЕГДА в UTF-8
-		res.Content = append(res.Content, []byte(data.(string))...)
+		res.Content = append(res.Content, []byte(addCR(data.(string)))...)
 	}
 	r.setStepInfo(stepChunkGetNum, stepStm, stepStm, true)
 	return nil
@@ -1215,7 +1227,17 @@ func prepareParam(
 	switch paramType {
 	case oString:
 		{
-			value := trimRightCRLF(paramValue[0])
+			//value := removeCR(trimRightCRLF(paramValue[0]))
+			value := removeCR(paramValue[0])
+
+			//			enc := charmap.Windows1251.NewEncoder()
+			//			// можно просто превратить строку
+			//			out := make([]byte, len(value))
+			//			_, _, err := enc.Transform(out, []byte(value), false)
+			//			if err != nil {
+			//				panic(err)
+			//			}
+			//			fmt.Printf("%s = %X\n", paramName, out)
 
 			if lVar, err = cur.NewVariable(0, oracle.StringVarType, uint(len(value))); err != nil {
 				return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
@@ -1259,7 +1281,8 @@ func prepareParam(
 	case oNumber:
 		{
 			value := trimRightCRLF(paramValue[0])
-			if lVar, err = cur.NewVariable(1, oracle.NumberAsStringVarType, 0); err != nil {
+			// Перешли на использование неявного преобразования для использования настроек из SESSION_INIT
+			if lVar, err = cur.NewVariable(1, oracle.StringVarType, uint(len(value))); err != nil {
 				return errgo.Newf("error creating variable for %s(%T): %s", paramName, value, err)
 			}
 			if value != "" {
@@ -1401,10 +1424,28 @@ func prepareParam(
 			value := make([]interface{}, len(paramValue))
 			valueMaxLen := 0
 			for i, val := range paramValue {
-				val := trimRightCRLF(val)
-				value[i] = val
-				if len(val) > valueMaxLen {
-					valueMaxLen = len(val)
+				val1 := val
+				switch paramType {
+				case oStringTab:
+					{
+						val1 = removeCR(val1)
+					}
+				case oNumberTab:
+					{
+						val1 = removeCR(trimRightCRLF(val1))
+						if strings.HasPrefix(val1, ",") {
+							val1 = "0" + val1
+						}
+					}
+				default:
+					{
+						val1 = removeCR(trimRightCRLF(val1))
+					}
+				}
+				//val := removeCR(trimRightCRLF(val))
+				value[i] = val1
+				if len(val1) > valueMaxLen {
+					valueMaxLen = len(val1)
 				}
 			}
 			switch paramType {
@@ -1611,6 +1652,33 @@ func ExtractFileName(contentDisposition string) string {
 	return r
 }
 
-var crlf = string([]byte{13, 10})
+var (
+	crlf = string([]byte{13, 10})
+	cr   = string([]byte{13})
+	lf   = string([]byte{10})
+)
 
 func trimRightCRLF(val string) string { return strings.TrimRight(val, crlf) }
+
+func removeCR(val string) string { return strings.Replace(val, cr, "", -1) }
+
+func addCR(val string) string {
+
+	var out []byte
+	var prevRune rune
+
+	for i := 0; i < len(val); {
+		r, wid := utf8.DecodeRuneInString(val[i:])
+		if wid == 1 {
+			if r == rune(10) {
+				if prevRune != rune(13) {
+					out = append(out, cr...)
+				}
+			}
+		}
+		prevRune = r
+		out = append(out, val[i:i+wid]...)
+		i += wid
+	}
+	return string(out)
+}

@@ -113,11 +113,12 @@ declare
   l_page_id varchar2(40) := :page_id;/*Для совместимости*/
   l_session_id varchar2(40) := :session_id;/*Для совместимости*/
   l_request varchar2(40) := :request;/*Для совместимости*/
+  l_mime_type varchar2(240) := :mime_type;/*Для совместимости*/
 begin
   owa.init_cgi_env(:num_params, :param_name, :param_val);
   %s
-  insert into %s(name, mime_type, doc_size, last_updated, content_type, blob_content, pt_dc_id)
-  values(:name, :mime_type, :doc_size, sysdate, :content_type, :lob, pt_dc_by_user());
+  insert into %s(name, doc_size, last_updated, content_type, blob_content, PTDCD_ID)
+  values(:name, :doc_size, sysdate, :content_type, :lob, pt_dc_by_user());
   :ret_name := :name;
   :sqlerrcode := 0;
   :sqlerrm := '';
