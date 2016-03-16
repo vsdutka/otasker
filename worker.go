@@ -2,11 +2,13 @@
 package otasker
 
 import (
-	"github.com/vsdutka/metrics"
 	"net/url"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/vsdutka/metrics"
+	"github.com/vsdutka/mltpart"
 )
 
 var numberOfSessions = metrics.NewInt("PersistentHandler_Number_Of_Sessions", "Server - Number of persistent sessions", "Pieces", "p")
@@ -24,7 +26,7 @@ type work struct {
 	reqCGIEnv         map[string]string
 	reqProc           string
 	reqParams         url.Values
-	reqFiles          *Form
+	reqFiles          *mltpart.Form
 	dumpFileName      string
 }
 
@@ -159,7 +161,7 @@ func Run(
 	cgiEnv map[string]string,
 	procName string,
 	urlParams url.Values,
-	reqFiles *Form,
+	reqFiles *mltpart.Form,
 	//fn func() oracleTasker,
 	waitTimeout, idleTimeout time.Duration,
 	dumpFileName string,

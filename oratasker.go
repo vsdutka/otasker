@@ -4,9 +4,6 @@ package otasker
 import (
 	"bytes"
 	"fmt"
-	//	"golang.org/x/net/html/charset"
-	//	"golang.org/x/text/encoding"
-	//	"golang.org/x/text/transform"
 	"io/ioutil"
 	"net/http"
 	"net/url"
@@ -18,10 +15,9 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/vsdutka/mltpart"
 	"gopkg.in/errgo.v1"
 	"gopkg.in/goracle.v1/oracle"
-
-	//	"golang.org/x/text/encoding/charmap"
 )
 
 const (
@@ -54,7 +50,7 @@ type OracleTasker interface {
 		cgiEnv map[string]string,
 		procName string,
 		urlParams url.Values,
-		reqFiles *Form,
+		reqFiles *mltpart.Form,
 		dumpErrorFileName string) OracleTaskResult
 	CloseAndFree() error
 	Break() error
@@ -171,7 +167,7 @@ func (r *oracleTasker) CloseAndFree() error {
 func (r *oracleTasker) Run(sessionID, taskID, userName, userPass, connStr,
 	paramStoreProc, beforeScript, afterScript, documentTable string,
 	cgiEnv map[string]string, procName string, urlParams url.Values,
-	reqFiles *Form, dumpErrorFileName string) OracleTaskResult {
+	reqFiles *mltpart.Form, dumpErrorFileName string) OracleTaskResult {
 
 	r.cafMutex.Lock()
 
@@ -339,7 +335,7 @@ func (r *oracleTasker) evalSessionID() error {
 }
 
 func (r *oracleTasker) run(res *OracleTaskResult, paramStoreProc, beforeScript, afterScript, documentTable string,
-	cgiEnv map[string]string, procName string, urlParams url.Values, reqFiles *Form) error {
+	cgiEnv map[string]string, procName string, urlParams url.Values, reqFiles *mltpart.Form) error {
 
 	const (
 		initParams = `
@@ -504,7 +500,36 @@ func (r *oracleTasker) run(res *OracleTaskResult, paramStoreProc, beforeScript, 
 		extParamValueMaxLen int
 	)
 
-	//fmt.Println("urlParams = ", urlParams)
+	if reqFiles != nil {
+		for paramName, paramValue := range reqFiles.File {
+			fileName, err := r.saveFile(paramStoreProc, beforeScript, afterScript, documentTable,
+				cgiEnv, urlParams, paramValue)
+			if err != nil {
+				return err
+			}
+
+			paramType, paramTypeName, _ := ArgumentInfo(r.connStr, procName, paramName)
+
+			err = prepareParam(cur, sqlParams,
+				paramName, fileName,
+				paramType, paramTypeName,
+				paramStoreProc,
+				&stmExecDeclarePart, &stmShowDeclarePart,
+				&stmExecSetPart, &stmShowSetPart,
+				&stmExecProcParams, &stmShowProcParams,
+				&stmExecStoreInContext, &stmShowStoreInContext)
+			if err != nil {
+				return err
+			}
+
+			extParamName = append(extParamName, paramName)
+			extParamValue = append(extParamValue, fileName[0])
+
+			if len(fileName[0]) > extParamValueMaxLen {
+				extParamValueMaxLen = len(fileName[0])
+			}
+		}
+	}
 
 	for paramName, paramValue := range urlParams {
 		paramName = strings.Trim(paramName, " ")
@@ -537,40 +562,40 @@ func (r *oracleTasker) run(res *OracleTaskResult, paramStoreProc, beforeScript, 
 		}
 	}
 
-	if reqFiles != nil {
-		for paramName, paramValue := range reqFiles.File {
-			fileName, err := r.saveFile(paramStoreProc, beforeScript, afterScript, documentTable,
-				cgiEnv, urlParams, paramValue)
-			if err != nil {
-				return err
-			}
-			paramType, paramTypeName, _ := ArgumentInfo(r.connStr, procName, paramName)
+	//	if reqFiles != nil {
+	//		for paramName, paramValue := range reqFiles.File {
+	//			fileName, err := r.saveFile(paramStoreProc, beforeScript, afterScript, documentTable,
+	//				cgiEnv, urlParams, paramValue)
+	//			if err != nil {
+	//				return err
+	//			}
+	//			paramType, paramTypeName, _ := ArgumentInfo(r.connStr, procName, paramName)
 
-			fmt.Println("fileName = ", fileName)
-			fmt.Println("paramType = ", paramType)
-			fmt.Println("paramTypeName = ", paramTypeName)
+	//			fmt.Println("fileName = ", fileName)
+	//			fmt.Println("paramType = ", paramType)
+	//			fmt.Println("paramTypeName = ", paramTypeName)
 
-			err = prepareParam(cur, sqlParams,
-				paramName, fileName,
-				paramType, paramTypeName,
-				paramStoreProc,
-				&stmExecDeclarePart, &stmShowDeclarePart,
-				&stmExecSetPart, &stmShowSetPart,
-				&stmExecProcParams, &stmShowProcParams,
-				&stmExecStoreInContext, &stmShowStoreInContext)
-			if err != nil {
-				return err
-			}
+	//			err = prepareParam(cur, sqlParams,
+	//				paramName, fileName,
+	//				paramType, paramTypeName,
+	//				paramStoreProc,
+	//				&stmExecDeclarePart, &stmShowDeclarePart,
+	//				&stmExecSetPart, &stmShowSetPart,
+	//				&stmExecProcParams, &stmShowProcParams,
+	//				&stmExecStoreInContext, &stmShowStoreInContext)
+	//			if err != nil {
+	//				return err
+	//			}
 
-			extParamName = append(extParamName, paramName)
-			extParamValue = append(extParamValue, fileName[0])
+	//			extParamName = append(extParamName, paramName)
+	//			extParamValue = append(extParamValue, fileName[0])
 
-			if len(fileName[0]) > extParamValueMaxLen {
-				extParamValueMaxLen = len(fileName[0])
-			}
+	//			if len(fileName[0]) > extParamValueMaxLen {
+	//				extParamValueMaxLen = len(fileName[0])
+	//			}
 
-		}
-	}
+	//		}
+	//	}
 
 	stmExecSetPart.WriteString(fmt.Sprintf("  l_num_ext_params := %d;\n", int32(len(extParamName))))
 	stmShowSetPart.WriteString(fmt.Sprintf("  l_num_ext_params := %d;\n", int32(len(extParamName))))
@@ -840,9 +865,15 @@ func (r *oracleTasker) getRestChunks(res *OracleTaskResult) error {
 }
 
 func (r *oracleTasker) saveFile(paramStoreProc, beforeScript, afterScript, documentTable string,
-	cgiEnv map[string]string, urlParams url.Values, fileHeaders []*FileHeader) ([]string, error) {
+	cgiEnv map[string]string, urlParams url.Values, fileHeaders []*mltpart.FileHeader) ([]string, error) {
 	fileNames := make([]string, len(fileHeaders))
 	for i, fileHeader := range fileHeaders {
+		//Если Header == nil, значит заголовок сделан из значения параметра, переданного как строковая
+		//просто добавляем в список имен
+		if fileHeader.Header == nil {
+			fileNames[i] = fileHeader.Filename
+			continue
+		}
 		//_, fileNames[i] = filepath.Split(fileHeader.Filename)
 		fileNames[i] = ExtractFileName(fileHeader.Header.Get("Content-Disposition"))
 
@@ -857,7 +888,7 @@ func (r *oracleTasker) saveFile(paramStoreProc, beforeScript, afterScript, docum
 		//_ = fileContent
 		fileContentType := fileHeader.Header.Get("Content-Type")
 		fileNames[i], err = r.saveFileToDB(paramStoreProc, beforeScript, afterScript, documentTable,
-			cgiEnv, urlParams, fileNames[i], fileHeader.lastArg, fileContentType, fileContentType, fileContent)
+			cgiEnv, urlParams, fileNames[i], fileHeader.LastArg, fileContentType, fileContentType, fileContent)
 		if err != nil {
 			return nil, err
 		}
