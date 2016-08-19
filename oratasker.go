@@ -729,11 +729,15 @@ func (r *oracleTasker) run(res *OracleTaskResult, paramStoreProc, beforeScript, 
 			if bNextChunkExists.(int32) != 0 {
 				r.getRestChunks(res)
 			}
+
 			//FIXME - Убрать костыль после того. как принудительная установка будет удалена из кода на PL/SQL
 			//В коде на PL/SQL встречаются места, где принудительно устанавливается charset.
 			//Поскольку библиотека получает данные в UTF-8, приходиться менять/удалять charset как в заголовках, так и в теле ответа
 			res.ContentType, _, _ = fixContentType(contentType)
 			res.Content = fixMeta(res.Content)
+			if res.ContentType == "" {
+				res.ContentType = http.DetectContentType(res.Content)
+			}
 		}
 	case 1:
 		{
