@@ -4,6 +4,7 @@ package otasker
 import (
 	"bytes"
 	"mime"
+	"net/http"
 	"net/url"
 	"strings"
 )
@@ -42,8 +43,8 @@ func encodeFilename(afilename string) string {
 	return url.QueryEscape(afilename)
 }
 
-func parseHeaders(headers string) map[string]string {
-	fixedHeaders := make(map[string]string)
+func parseHeaders(headers string) http.Header {
+	fixedHeaders := make(http.Header)
 
 	if headers != "" {
 		for _, s := range strings.Split(headers, "\n") {
@@ -68,11 +69,11 @@ func parseHeaders(headers string) map[string]string {
 								newVal += partValue + ";"
 							}
 						}
-						fixedHeaders[headerName] = newVal
+						fixedHeaders.Add(headerName, newVal)
 					}
 				default:
 					{
-						fixedHeaders[headerName] = headerValue
+						fixedHeaders.Add(headerName, headerValue)
 					}
 				}
 			}

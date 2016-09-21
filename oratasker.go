@@ -33,7 +33,7 @@ const (
 type OracleTaskResult struct {
 	StatusCode  int
 	ContentType string
-	Headers     map[string]string
+	Headers     http.Header
 	Content     []byte
 	Duration    int64
 }
@@ -697,8 +697,8 @@ func (r *oracleTasker) run(res *OracleTaskResult, paramStoreProc, beforeScript, 
 	//ContentType передается через дополнительные заголовки - ЕКБ
 	for k, v := range res.Headers {
 		if strings.ToLower(k) == "content-type" {
-			contentType = v
-			delete(res.Headers, k)
+			contentType = strings.Join(v, ";")
+			res.Headers.Del(k)
 		}
 	}
 
